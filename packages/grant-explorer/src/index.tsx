@@ -1,14 +1,15 @@
 import "./browserPatches";
 
-import { RainbowKitProvider, Theme, lightTheme } from "@rainbow-me/rainbowkit";
-import { ExploreProjectsPage } from "./features/discovery/ExploreProjectsPage";
 import { getConfig } from "common/src/config";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { RainbowKitProvider } from "@rainbow-me/rainbowkit";
+import { ExploreApplicationsPage } from "./features/discovery/ExploreApplicationsPage";
 import { DataLayer, DataLayerProvider } from "data-layer";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { HashRouter, Route, Routes } from "react-router-dom";
-import { WagmiConfig } from "wagmi";
-import { chains, config } from "./app/wagmi";
+import { ResolvedRegister, WagmiProvider } from "wagmi";
+import queryClient, { config } from "./app/wagmi";
 import { RoundProvider } from "./context/RoundContext";
 import { initDatadog } from "./datadog";
 import { initPosthog } from "./posthog";
@@ -31,8 +32,9 @@ import ViewCart from "./features/round/ViewCartPage/ViewCartPage";
 import ViewProjectDetails from "./features/round/ViewProjectDetails";
 import ViewRound from "./features/round/ViewRoundPage";
 import AlloWrapper from "./features/api/AlloWrapper";
-import { merge } from "lodash";
 import { PostHogProvider } from "posthog-js/react";
+import ViewProject from "./features/projects/ViewProject";
+import { ExploreProjectsPage } from "./features/discovery/ExploreProjectsPage";
 
 initSentry();
 initDatadog();
@@ -55,84 +57,82 @@ const dataLayer = new DataLayer({
   ipfs: {
     gateway: getConfig().ipfs.baseUrl,
   },
-  subgraph: {
-    endpointsByChainId: getConfig().dataLayer.subgraphEndpoints,
-  },
   indexer: {
     baseUrl: `${getConfig().dataLayer.gsIndexerEndpoint}/graphql`,
   },
 });
-
-const customRainbowKitTheme = merge(lightTheme(), {
-  colors: {
-    accentColor: "#FFD9CD",
-    accentColorForeground: "#000000",
-  },
-}) as Theme;
-
 root.render(
   <React.StrictMode>
     <PostHogProvider client={posthog}>
-      <ChakraProvider>
-        <WagmiConfig config={config}>
-          <RainbowKitProvider
-            theme={customRainbowKitTheme}
-            coolMode
-            chains={chains}
-          >
-            <RoundProvider>
-              <DataLayerProvider client={dataLayer}>
-                <AlloWrapper>
-                  <HashRouter>
-                    <Routes>
-                      {/* Protected Routes */}
-                      <Route element={<Auth />} />
+      <WagmiProvider config={config as ResolvedRegister["config"]}>
+        <QueryClientProvider client={queryClient}>
+          <RainbowKitProvider>
+            <ChakraProvider>
+              <AlloWrapper>
+                <RoundProvider>
+                  <DataLayerProvider client={dataLayer}>
+                    <HashRouter>
+                      <Routes>
+                        {/* Protected Routes */}
+                        <Route element={<Auth />} />
 
-                      {/* Default Route */}
-                      <Route path="/" element={<LandingPage />} />
+                        {/* Default Route */}
+                        <Route path="/" element={<LandingPage />} />
 
-                      <Route path="/rounds" element={<ExploreRoundsPage />} />
-                      <Route
-                        path="/projects"
-                        element={<ExploreProjectsPage />}
-                      />
+                        <Route path="/rounds" element={<ExploreRoundsPage />} />
 
-                      {/* Round Routes */}
-                      <Route
-                        path="/round/:chainId/:roundId"
-                        element={<ViewRound />}
-                      />
-                      <Route
-                        path="/round/:chainId/:roundId/:applicationId"
-                        element={<ViewProjectDetails />}
-                      />
+                        {/* Round Routes */}
+                        <Route
+                          path="/round/:chainId/:roundId"
+                          element={<ViewRound />}
+                        />
+                        <Route
+                          path="/round/:chainId/:roundId/:applicationId"
+                          element={<ViewProjectDetails />}
+                        />
 
-                      <Route path="/cart" element={<ViewCart />} />
+                        {/* Project Routes */}
 
-                      <Route path="/thankyou" element={<ThankYou />} />
+                        <Route
+                          path="/projects"
+                          element={<ExploreProjectsPage />}
+                        />
 
-                      <Route
-                        path="/contributors/:address"
-                        element={<ViewContributionHistoryPage />}
-                      />
+                        <Route
+                          path="/projects/:projectId"
+                          element={<ViewProject />}
+                        />
 
-                      {/* Access Denied */}
-                      <Route path="/access-denied" element={<AccessDenied />} />
-                      <Route
-                        path="/collections/:collectionCid"
-                        element={<ExploreProjectsPage />}
-                      />
+                        <Route path="/cart" element={<ViewCart />} />
 
-                      {/* 404 */}
-                      <Route path="*" element={<NotFound />} />
-                    </Routes>
-                  </HashRouter>
-                </AlloWrapper>
-              </DataLayerProvider>
-            </RoundProvider>
+                        <Route path="/thankyou" element={<ThankYou />} />
+
+                        <Route
+                          path="/contributors/:address"
+                          element={<ViewContributionHistoryPage />}
+                        />
+
+                        {/* Access Denied */}
+                        <Route
+                          path="/access-denied"
+                          element={<AccessDenied />}
+                        />
+                        <Route
+                          path="/collections/:collectionCid"
+                          element={<ExploreApplicationsPage />}
+                        />
+
+                        {/* 404 */}
+                        <Route path="*" element={<NotFound />} />
+                      </Routes>
+                    </HashRouter>
+                  </DataLayerProvider>
+                </RoundProvider>
+              </AlloWrapper>
+            </ChakraProvider>
           </RainbowKitProvider>
-        </WagmiConfig>
-      </ChakraProvider>
+        </QueryClientProvider>
+      </WagmiProvider>
     </PostHogProvider>
   </React.StrictMode>
 );

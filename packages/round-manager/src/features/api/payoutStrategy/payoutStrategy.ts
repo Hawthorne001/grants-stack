@@ -1,4 +1,3 @@
-import { ChainId } from "common";
 import { BigNumber, Signer } from "ethers";
 import { useEffect, useMemo, useState } from "react";
 import { directPayoutStrategyFactoryContract } from "../contracts";
@@ -41,7 +40,7 @@ interface GroupedProjects {
  * @returns GroupedProjects
  */
 export const useGroupProjectsByPaymentStatus = (
-  chainId: ChainId,
+  chainId: number,
   round: Round
 ): GroupedProjects => {
   const [groupedProjects, setGroupedProjects] = useState<GroupedProjects>({
@@ -71,6 +70,10 @@ export const useGroupProjectsByPaymentStatus = (
             matchPoolPercentage: matchingStatsData.matchPoolPercentage,
             projectId: matchingStatsData.projectId,
             applicationId: matchingStatsData.applicationId,
+            anchorAddress: applications?.find(
+              (application) =>
+                application.projectId === matchingStatsData.projectId
+            )?.anchorAddress,
             matchAmountInToken: BigNumber.from(
               matchingStatsData.matchAmountInToken
             ),
@@ -81,7 +84,7 @@ export const useGroupProjectsByPaymentStatus = (
           };
         }
       ) ?? [],
-    [round.matchingDistribution?.matchingDistribution]
+    [round.matchingDistribution?.matchingDistribution, applications]
   );
 
   useEffect(() => {

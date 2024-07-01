@@ -1,5 +1,5 @@
 /* eslint-disable no-unexpected-multiline */
-import { ChainId, getTokenPrice, NATIVE, submitPassportLite } from "common";
+import { getTokenPrice, NATIVE, submitPassportLite } from "common";
 import { useCartStorage } from "../../../store";
 import { useEffect, useMemo, useState } from "react";
 import { Summary } from "./Summary";
@@ -28,16 +28,16 @@ import { Skeleton } from "@chakra-ui/react";
 import { MatchingEstimateTooltip } from "../../common/MatchingEstimateTooltip";
 import { parseChainId } from "common/src/chains";
 import { useDataLayer } from "data-layer";
-import { fetchBalance } from "@wagmi/core";
+import { getBalance } from "@wagmi/core";
 import { isPresent } from "ts-is-present";
-import { useAllo } from "../../api/AlloWrapper";
 import { getFormattedRoundId } from "../../common/utils/utils";
 import { datadogLogs } from "@datadog/browser-logs";
+import { config } from "../../../app/wagmi";
 
 export function SummaryContainer() {
   const { data: walletClient } = useWalletClient();
   const navigate = useNavigate();
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, connector } = useAccount();
   const {
     projects,
     getVotingTokenForChain,
@@ -48,7 +48,7 @@ export function SummaryContainer() {
   const dataLayer = useDataLayer();
 
   const { openConnectModal } = useConnectModal();
-  const allo = useAllo();
+
   const projectsByChain = useMemo(
     () => groupBy(projects, "chainId"),
     [projects]
@@ -62,32 +62,36 @@ export function SummaryContainer() {
   );
 
   /** How much of the voting token for a chain does the address have*/
+  // todo: introduce a multicall here
   const [tokenBalancesPerChain, setTokenBalancesPerChain] = useState<
-    Map<ChainId, bigint>
+    Map<number, bigint>
   >(new Map());
   useEffect(() => {
     const runner = async () => {
       const newMap = new Map(tokenBalancesPerChain);
-      await Promise.all(
-        chainIds.map(async (chainId) => {
-          const votingToken = getVotingTokenForChain(chainId);
-          const { value } = await fetchBalance({
-            address: address ?? zeroAddress,
+
+      for (const chainId of chainIds) {
+        const votingToken = getVotingTokenForChain(chainId);
+        try {
+          const { value } = await getBalance(config, {
+            address: address!,
             token:
               votingToken.address === zeroAddress ||
-              votingToken.address === NATIVE
+              votingToken.address.toLowerCase() === NATIVE.toLowerCase()
                 ? undefined
                 : votingToken.address,
             chainId,
           });
           newMap.set(chainId, value);
-        })
-      );
+        } catch (e) {
+          console.error(`Error fetching balance for chain ${chainId}`, e);
+        }
+      }
       setTokenBalancesPerChain(newMap);
     };
-    runner();
+    if (address && address !== zeroAddress) runner();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, chainIds, getVotingTokenForChain]);
+  }, [address]);
 
   const totalDonationsPerChain = useMemo(() => {
     return Object.fromEntries(
@@ -100,7 +104,7 @@ export function SummaryContainer() {
               acc +
               parseUnits(
                 amount ? amount : "0",
-                getVotingTokenForChain(parseChainId(key)).decimal
+                getVotingTokenForChain(parseChainId(key)).decimals
               ),
             0n
           ),
@@ -167,7 +171,7 @@ export function SummaryContainer() {
 
   /** The ids of the chains that will be checked out */
   const [chainIdsBeingCheckedOut, setChainIdsBeingCheckedOut] = useState<
-    ChainId[]
+    number[]
   >(Object.keys(projectsByChain).map(Number));
 
   /** Keep the chains to be checked out in sync with the projects in the cart */
@@ -205,28 +209,6 @@ export function SummaryContainer() {
       navigate("/thankyou");
     }
   }, [chainsToCheckout, navigate, voteStatus]);
-
-  const [tokenBalances, setTokenBalances] = useState(new Map());
-  useEffect(() => {
-    const newTokenBalances = new Map(tokenBalances);
-    Object.keys(projectsByChain)
-      .map(parseChainId)
-      .forEach(async (chainId) => {
-        const votingToken = getVotingTokenForChain(chainId);
-        const balance = await fetchBalance({
-          token:
-            votingToken.address === zeroAddress ||
-            votingToken.address === NATIVE
-              ? undefined
-              : votingToken.address,
-          chainId,
-          address: address ?? zeroAddress,
-        });
-        newTokenBalances.set(chainId, balance.value);
-      });
-    setTokenBalances(newTokenBalances);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectsByChain, address, getVotingTokenForChain]);
 
   function checkEmptyDonations() {
     const emptyDonationsExist =
@@ -333,7 +315,8 @@ export function SummaryContainer() {
 
   async function handleSubmitDonation() {
     try {
-      if (!walletClient || !allo) {
+      if (!walletClient || !connector) {
+        console.log("Wallet client or Connector not available");
         return;
       }
 
@@ -348,7 +331,7 @@ export function SummaryContainer() {
           permitDeadline: currentPermitDeadline,
         })),
         walletClient,
-        allo,
+        connector,
         dataLayer
       );
     } catch (error) {
@@ -370,7 +353,7 @@ export function SummaryContainer() {
               Number(
                 formatUnits(
                   totalDonationsPerChain[chainId],
-                  getVotingTokenForChain(parseChainId(chainId)).decimal
+                  getVotingTokenForChain(parseChainId(chainId)).decimals
                 )
               ) * Number(price)
             );
@@ -393,13 +376,13 @@ export function SummaryContainer() {
 
       return {
         roundId: getFormattedRoundId(round.id),
-        chainId: projectFromRound?.chainId ?? round.chainId ?? ChainId.MAINNET,
+        chainId: projectFromRound?.chainId ?? round.chainId ?? 1,
         potentialVotes: projects
           .filter((proj) => proj.roundId === round.id)
           .map((proj) => ({
             amount: parseUnits(
               proj.amount ?? "0",
-              getVotingTokenForChain(parseChainId(proj.chainId)).decimal ?? 18
+              getVotingTokenForChain(parseChainId(proj.chainId)).decimals ?? 18
             ),
             grantAddress: proj.recipient,
             voter: address ?? zeroAddress,

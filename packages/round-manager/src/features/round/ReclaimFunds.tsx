@@ -13,10 +13,9 @@ import ErrorModal from "../common/ErrorModal";
 import ProgressModal from "../common/ProgressModal";
 import { Spinner } from "../common/Spinner";
 import { AdditionalGasFeesNote } from "./BulkApplicationCommon";
-import { useTokenPrice } from "common";
+import { getPayoutTokens, useTokenPrice } from "common";
 import { assertAddress } from "common/src/address";
-import { payoutTokens } from "../api/payoutTokens";
-import { useAllo } from "common";
+import { useAllo, stringToBlobUrl } from "common";
 
 export default function ReclaimFunds(props: {
   round: Round | undefined;
@@ -120,13 +119,12 @@ function ReclaimFundsContent(props: {
     }
   }, [navigate, transactionReplaced, props.roundId, reclaimStatus]);
 
-  const matchingFundPayoutToken =
-    props.round &&
-    payoutTokens.filter(
-      (t) =>
-        t.address.toLowerCase() === props.round?.token?.toLowerCase() &&
-        t.chainId === props.round.chainId
-    )[0];
+  const tokens = props.round?.chainId
+    ? getPayoutTokens(props.round.chainId)
+    : [];
+  const matchingFundPayoutToken = tokens.find(
+    (t) => t.address.toLowerCase() === props.round?.token?.toLowerCase()
+  );
 
   const tokenDetail =
     matchingFundPayoutToken?.address == ethers.constants.AddressZero
@@ -196,7 +194,7 @@ function ReclaimFundsContent(props: {
             FUNDS TO BE RECLAIMED
           </div>
           <div className="font-bold mb-1">
-            {balanceData?.formatted} {matchingFundPayoutToken?.name}
+            {balanceData?.formatted} {matchingFundPayoutToken?.code}
           </div>
           <div className="text-md text-slate-400 mb-6">
             (${Number(tokenBalanceInUSD).toFixed(2)} USD)
@@ -275,14 +273,14 @@ function ReclaimFundsContent(props: {
         <div className="flex flex-row justify-start mt-6">
           <p className="text-sm w-1/2">Payout token:</p>
           <p className="flex flex-row text-sm">
-            {matchingFundPayoutToken?.logo ? (
+            {matchingFundPayoutToken?.icon ? (
               <img
-                src={matchingFundPayoutToken.logo}
+                src={stringToBlobUrl(matchingFundPayoutToken.icon)}
                 alt=""
                 className="h-6 w-6 flex-shrink-0 rounded-full"
               />
             ) : null}
-            <span className="ml-2 pt-0.5">{matchingFundPayoutToken?.name}</span>
+            <span className="ml-2 pt-0.5">{matchingFundPayoutToken?.code}</span>
           </p>
         </div>
         <div className="flex flex-row justify-start mt-6">
@@ -291,7 +289,7 @@ function ReclaimFundsContent(props: {
             {matchingFunds?.toLocaleString(undefined, {
               minimumFractionDigits: 2,
             })}{" "}
-            {matchingFundPayoutToken?.name}{" "}
+            {matchingFundPayoutToken?.code}{" "}
             {matchingFundsInUSD && matchingFundsInUSD > 0 ? (
               <span className="text-sm text-slate-400 ml-2">
                 $
@@ -309,7 +307,7 @@ function ReclaimFundsContent(props: {
             {Number(balanceData?.formatted).toLocaleString(undefined, {
               minimumFractionDigits: 2,
             })}{" "}
-            {matchingFundPayoutToken?.name}{" "}
+            {matchingFundPayoutToken?.code}{" "}
             {tokenBalanceInUSD && tokenBalanceInUSD > 0 ? (
               <span className="text-sm text-slate-400 ml-2">
                 $
@@ -334,7 +332,7 @@ function ReclaimFundsContent(props: {
           <button
             className="bg-violet-400 hover:bg-violet-700 text-white py-2 px-4 rounded disabled:opacity-50"
             data-testid="reclaim-fund-btn"
-            disabled={walletAddress.length == 0 || balanceData?.value.isZero()}
+            disabled={walletAddress.length == 0 || balanceData?.value === 0n}
             onClick={() => handleReclaimFunds()}
           >
             Reclaim funds

@@ -1,12 +1,11 @@
 import { datadogLogs } from "@datadog/browser-logs";
 import { InformationCircleIcon } from "@heroicons/react/solid";
-import { getConfig } from "common/src/config";
 import { BigNumber, ethers } from "ethers";
 import { Logger } from "ethers/lib.esm/utils";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ReactTooltip from "react-tooltip";
-import { useAccount, useBalance, useNetwork } from "wagmi";
+import { useAccount, useBalance } from "wagmi";
 import { errorModalDelayMs } from "../../constants";
 import { useFundContract } from "../../context/round/FundContractContext";
 import { ProgressStatus, Round } from "../api/types";
@@ -15,14 +14,25 @@ import ConfirmationModal from "../common/ConfirmationModal";
 import ErrorModal from "../common/ErrorModal";
 import ProgressModal from "../common/ProgressModal";
 import { Spinner } from "../common/Spinner";
-import { classNames, useAllo, useTokenPrice } from "common";
+import {
+  TToken,
+  classNames,
+  getPayoutTokens,
+  stringToBlobUrl,
+  useAllo,
+  useTokenPrice,
+} from "common";
 import { assertAddress } from "common/src/address";
-import { PayoutToken, payoutTokens } from "../api/payoutTokens";
-import { formatUnits } from "viem";
+import { formatUnits, zeroAddress } from "viem";
+import { Erc20__factory } from "../../types/generated/typechain";
+import { getAlloAddress } from "common/src/allo/backends/allo-v2";
+import { JsonRpcSigner } from "@ethersproject/providers";
+import { getEthersSigner } from "../../app/wagmi";
 
+// fixme: move this to its own hook
 export function useContractAmountFunded(args: {
   round: Round | undefined;
-  payoutToken: PayoutToken | undefined;
+  payoutToken: TToken | undefined;
 }):
   | {
       isLoading: true;
@@ -43,6 +53,7 @@ export function useContractAmountFunded(args: {
       };
     } {
   const { round, payoutToken } = args;
+
   const isAlloV2 = round?.tags?.includes("allo-v2");
 
   const { data: balanceData, error: balanceError } = useBalance(
@@ -97,7 +108,7 @@ export function useContractAmountFunded(args: {
       isLoading: false,
       error: undefined,
       data: {
-        fundedAmount: balanceData.value.toBigInt(),
+        fundedAmount: BigInt(balanceData.value.toString()),
         fundedAmountInUsd: priceData
           ? Number(balanceData.formatted) * Number(priceData)
           : undefined,
@@ -132,9 +143,10 @@ export default function FundContract(props: {
   round: Round | undefined;
   roundId: string | undefined;
 }) {
-  const { address } = useAccount();
   const navigate = useNavigate();
 
+  const { address, chainId, isConnected, connector } = useAccount();
+  const [signer, setSigner] = useState<JsonRpcSigner>();
   const [amountToFund, setAmountToFund] = useState("");
   const [insufficientBalance, setInsufficientBalance] = useState(false);
   const [openConfirmationModal, setOpenConfirmationModal] = useState(false);
@@ -145,8 +157,13 @@ export default function FundContract(props: {
   >();
   const [transactionReplaced, setTransactionReplaced] = useState(false);
 
-  const { chain } = useNetwork() || {};
-  const chainId = chain?.id ?? 5;
+  useEffect(() => {
+    const init = async () => {
+      const s = await getEthersSigner(connector!, chainId!);
+      setSigner(s);
+    };
+    if (isConnected && chainId && connector?.getAccounts) init();
+  }, [chainId, isConnected, connector]);
 
   const allo = useAllo();
 
@@ -201,14 +218,13 @@ export default function FundContract(props: {
     props.roundId,
   ]);
 
-  const matchingFundPayoutToken =
-    props.round &&
-    payoutTokens.filter(
-      (t) =>
-        t.address.toLowerCase() === props.round?.token?.toLowerCase() &&
-        t.chainId === props.round?.chainId
-    )[0];
+  const tokens = props.round?.chainId
+    ? getPayoutTokens(props.round.chainId)
+    : [];
 
+  const matchingFundPayoutToken = tokens.find(
+    (t) => t.address.toLowerCase() === props.round?.token?.toLowerCase()
+  );
   const { isLoading, data } = useContractAmountFunded({
     round: props.round,
     payoutToken: matchingFundPayoutToken,
@@ -216,10 +232,9 @@ export default function FundContract(props: {
 
   const amountFundedInUnits = formatUnits(
     data?.fundedAmount ?? 0n,
-    matchingFundPayoutToken?.decimal ?? 18
+    matchingFundPayoutToken?.decimals ?? 18
   );
   // todo: replace 0x0000000000000000000000000000000000000000 with native token for respective chain
-  const alloVersion = getConfig().allo.version;
 
   const tokenDetailUser =
     matchingFundPayoutToken?.address == ethers.constants.AddressZero
@@ -261,7 +276,7 @@ export default function FundContract(props: {
     const accountBalance = matchingFundPayoutTokenBalance?.value;
     const tokenBalance = ethers.utils.parseUnits(
       amountToFund,
-      matchingFundPayoutToken?.decimal
+      matchingFundPayoutToken?.decimals
     );
 
     if (!accountBalance || BigNumber.from(tokenBalance).gt(accountBalance)) {
@@ -359,14 +374,14 @@ export default function FundContract(props: {
         <div className="flex flex-row justify-start mt-6">
           <p className="text-sm w-1/3">Payout token:</p>
           <p className="flex flex-row text-sm">
-            {matchingFundPayoutToken?.logo ? (
+            {matchingFundPayoutToken?.icon ? (
               <img
-                src={matchingFundPayoutToken.logo}
+                src={stringToBlobUrl(matchingFundPayoutToken.icon)}
                 alt=""
                 className="h-6 w-6 flex-shrink-0 rounded-full"
               />
             ) : null}
-            <span className="ml-2 pt-0.5">{matchingFundPayoutToken?.name}</span>
+            <span className="ml-2 pt-0.5">{matchingFundPayoutToken?.code}</span>
           </p>
         </div>
         <div className="flex flex-row justify-start mt-6">
@@ -377,7 +392,7 @@ export default function FundContract(props: {
                 minimumFractionDigits: 5,
               })
               .replace(/\.?0+$/, "")}{" "}
-            {matchingFundPayoutToken?.name}{" "}
+            {matchingFundPayoutToken?.code}{" "}
             {matchingFundsInUSD && matchingFundsInUSD > 0 ? (
               <span className="text-sm text-slate-400 ml-2">
                 ${matchingFundsInUSD.toFixed(2)} USD
@@ -451,7 +466,7 @@ export default function FundContract(props: {
             <div className="flex flex-row justify-start mt-6">
               <p className="text-sm w-1/3">Amount funded:</p>
               <p className="text-sm">
-                {amountFundedInUnits} {matchingFundPayoutToken?.name}{" "}
+                {amountFundedInUnits} {matchingFundPayoutToken?.code}{" "}
                 {tokenBalanceInUSD && Number(tokenBalanceInUSD) > 0 ? (
                   <span className="text-sm text-slate-400 ml-2">
                     ${tokenBalanceInUSD.toFixed(2)} USD
@@ -468,7 +483,7 @@ export default function FundContract(props: {
                     minimumFractionDigits: 5,
                   })
                   .replace(/\.?0+$/, "")}{" "}
-                {matchingFundPayoutToken?.name}{" "}
+                {matchingFundPayoutToken?.code}{" "}
                 {amountLeftToFundInUSD !== undefined &&
                 amountLeftToFundInUSD > 0 ? (
                   <span className="text-sm text-slate-400 ml-2">
@@ -514,7 +529,7 @@ export default function FundContract(props: {
                   onClick={() =>
                     window.open(
                       getTxExplorerForContract(
-                        chainId,
+                        chainId!,
                         props.roundId as string
                       ),
                       "_blank"
@@ -608,7 +623,7 @@ export default function FundContract(props: {
   function ConfirmationModalBody() {
     const amountInUSD =
       Number(
-        parseFloat(amountToFund).toFixed(matchingFundPayoutToken?.decimal)
+        parseFloat(amountToFund).toFixed(matchingFundPayoutToken?.decimals)
       ) * Number(data);
     return (
       <div>
@@ -617,7 +632,7 @@ export default function FundContract(props: {
             AMOUNT TO BE FUNDED
           </div>
           <div className="font-bold mb-1">
-            {amountToFund} {matchingFundPayoutToken?.name}
+            {amountToFund} {matchingFundPayoutToken?.code}
           </div>
           {amountInUSD > 0 ? (
             <div className="text-md text-slate-400 mb-6">
@@ -651,13 +666,45 @@ export default function FundContract(props: {
         setOpenProgressModal(true);
       }, errorModalDelayMs);
 
+      let tokenAllowance = BigNumber.from(0);
+
+      let requireTokenApproval = false;
+
+      const amount = ethers.utils.parseUnits(
+        amountToFund.toString(),
+        matchingFundPayoutToken.decimals
+      );
+
+      const alloVersion = props.round?.tags?.includes("allo-v2") ? "v2" : "v1";
+      const roundAddress =
+        alloVersion === "v1" ? props.round?.id : getAlloAddress(chainId!);
+
+      if (
+        matchingFundPayoutToken?.address !== undefined &&
+        matchingFundPayoutToken?.address !== zeroAddress &&
+        signer
+      ) {
+        const erc20 = Erc20__factory.connect(
+          matchingFundPayoutToken?.address,
+          signer
+        );
+        tokenAllowance = await erc20.allowance(
+          address as string,
+          roundAddress as string
+        );
+        if (tokenAllowance.lt(amount)) {
+          requireTokenApproval = true;
+        }
+      }
+
       await fundContract({
         allo,
         roundId: props.roundId,
         fundAmount: Number(
-          parseFloat(amountToFund).toFixed(matchingFundPayoutToken.decimal)
+          parseFloat(amountToFund).toFixed(matchingFundPayoutToken.decimals)
         ),
         payoutToken: matchingFundPayoutToken,
+        requireTokenApproval,
       });
     } catch (error) {
       if (error === Logger.errors.TRANSACTION_REPLACED) {

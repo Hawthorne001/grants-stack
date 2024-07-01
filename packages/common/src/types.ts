@@ -1,6 +1,4 @@
 import { Round } from "data-layer";
-import { Hex } from "viem";
-import { ChainId } from "./chain-ids";
 import { AnyJson } from ".";
 import { BigNumber } from "ethers";
 
@@ -36,6 +34,7 @@ export type MatchingStatsData = {
   matchPoolPercentage: number;
   projectId: string;
   applicationId: string;
+  anchorAddress?: string;
   matchAmountInToken: BigNumber;
   originalMatchAmountInToken: BigNumber;
   projectPayoutAddress: string;
@@ -94,20 +93,4 @@ export type InputType =
 
 export type DeepRequired<T> = {
   [K in keyof T]: Required<DeepRequired<T[K]>>;
-};
-
-export type VotingToken = {
-  name: string;
-  chainId: ChainId;
-  address: Hex;
-  decimal: number;
-  logo?: string;
-  default?: boolean;
-  redstoneTokenId: string;
-  permitVersion?: string;
-  //TODO: remove if the previous default was intended to be used as defaultForVoting
-  defaultForVoting: boolean;
-  //TODO: split PayoutTokens and VotingTokens in
-  // 2 different types/lists and remove the following attribute
-  canVote: boolean;
 };

@@ -1,5 +1,5 @@
 import { Match } from "allo-indexer-client";
-import { getUTCDate } from "common";
+import { getPayoutTokens, getUTCDate } from "common";
 import { getConfig } from "common/src/config";
 import { utils } from "ethers";
 import { useMemo } from "react";
@@ -10,7 +10,6 @@ import {
   useRoundApplications,
   useRoundMatchingFunds,
 } from "../../hooks";
-import { payoutTokens } from "../api/payoutTokens";
 
 export default function ViewRoundStats() {
   const { id } = useParams();
@@ -31,10 +30,8 @@ export default function ViewRoundStats() {
   const { data: matches } = useRoundMatchingFunds(roundId);
   const matchToken =
     round &&
-    payoutTokens.find(
-      (t) =>
-        t.address.toLowerCase() == round.token.toLowerCase() &&
-        t.chainId === chainId
+    getPayoutTokens(chainId).find(
+      (t) => t.address.toLowerCase() == round.token.toLowerCase()
     );
 
   // check if the round is on Avalanche to prevent matching stats from being displayed
@@ -60,8 +57,8 @@ export default function ViewRoundStats() {
             round &&
             `${utils.formatUnits(
               round.matchAmount,
-              matchToken?.decimal
-            )} ${matchToken?.name}`
+              matchToken?.decimals
+            )} ${matchToken?.code}`
           }
           title={"Matching Funds Available"}
         />

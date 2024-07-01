@@ -2,7 +2,6 @@ import { ApplicationStatus, DistributionMatch } from "data-layer";
 import {
   Address,
   Hex,
-  PublicClient,
   encodeAbiParameters,
   encodePacked,
   getAddress,
@@ -13,15 +12,13 @@ import {
   parseUnits,
   zeroAddress,
 } from "viem";
-import { AnyJson, ChainId, TransactionBuilder } from "../..";
+import { AnyJson, TransactionBuilder } from "../..";
 import { parseChainId } from "../../chains";
-import { payoutTokens } from "../../payoutTokens";
 import {
   RoundCategory,
   UpdateAction,
   UpdateRoundParams,
   MatchingStatsData,
-  VotingToken,
 } from "../../types";
 import ProgramFactoryABI from "../abis/allo-v1/ProgramFactory";
 import MRC_ABI from "../abis/allo-v1/multiRoundCheckout";
@@ -51,10 +48,13 @@ import {
   sendTransaction,
 } from "../transaction-sender";
 import { getPermitType, PermitSignature } from "../voting";
-import { MRC_CONTRACTS } from "../addresses/mrc";
 import Erc20ABI from "../abis/erc20";
 import MerklePayoutStrategyImplementationABI from "../abis/allo-v1/MerklePayoutStrategyImplementation";
 import { BigNumber } from "ethers";
+import DirectPayoutStrategyImplementation from "../abis/allo-v1/DirectPayoutStrategyImplementation";
+import { hexZeroPad } from "ethers/lib/utils.js";
+import { getChainById, getTokensByChainId } from "@gitcoin/gitcoin-chain-data";
+import { TToken } from "@gitcoin/gitcoin-chain-data/dist/types";
 
 function createProjectId(args: {
   chainId: number;
@@ -72,8 +72,8 @@ function createProjectId(args: {
 function applicationStatusToNumber(status: ApplicationStatus) {
   switch (status) {
     case "PENDING":
-    case "IN_REVIEW":
       return 0n;
+    case "IN_REVIEW":
     case "APPROVED":
       return 1n;
     case "REJECTED":
@@ -89,7 +89,7 @@ export class AlloV1 implements Allo {
   private readonly transactionSender: TransactionSender;
   private readonly ipfsUploader: IpfsUploader;
   private readonly waitUntilIndexerSynced: WaitUntilIndexerSynced;
-  private readonly chainId: ChainId;
+  private readonly chainId: number;
 
   constructor(args: {
     chainId: number;
@@ -106,9 +106,8 @@ export class AlloV1 implements Allo {
   }
 
   async donate(
-    publicClient: PublicClient,
-    chainId: ChainId,
-    token: VotingToken,
+    chainId: number,
+    token: TToken,
     groupedVotes: Record<string, Hex[]>,
     groupedAmounts: Record<string, bigint> | bigint[],
     nativeTokenAmount: bigint,
@@ -119,7 +118,7 @@ export class AlloV1 implements Allo {
     }
   ) {
     let tx: Result<Hex>;
-    const mrcAddress = MRC_CONTRACTS[chainId];
+    const mrcAddress = getChainById(chainId).contracts.multiRoundCheckout;
 
     /* decide which function to use based on whether token is native, permit-compatible or DAI */
     if (token.address === zeroAddress) {
@@ -135,7 +134,7 @@ export class AlloV1 implements Allo {
         value: nativeTokenAmount,
       });
     } else if (permit) {
-      if (getPermitType(token) === "dai") {
+      if (getPermitType(token, this.chainId) === "dai") {
         tx = await sendTransaction(this.transactionSender, {
           address: mrcAddress,
           abi: MRC_ABI,
@@ -179,7 +178,7 @@ export class AlloV1 implements Allo {
     }
 
     if (tx.type === "success") {
-      return this.transactionSender.wait(tx.value, 60_000, publicClient);
+      return this.transactionSender.wait(tx.value, 60_000);
     } else {
       throw tx.error;
     }
@@ -489,8 +488,8 @@ export class AlloV1 implements Allo {
             args.roundData.applicationsEndTime
               ? dateToEthereumTimestamp(args.roundData.applicationsEndTime)
               : args.roundData.roundEndTime
-              ? dateToEthereumTimestamp(args.roundData.roundEndTime)
-              : maxUint256,
+                ? dateToEthereumTimestamp(args.roundData.roundEndTime)
+                : maxUint256,
             dateToEthereumTimestamp(args.roundData.roundStartTime),
             args.roundData.roundEndTime
               ? dateToEthereumTimestamp(args.roundData.roundEndTime)
@@ -501,15 +500,16 @@ export class AlloV1 implements Allo {
         let parsedTokenAmount = 0n;
 
         if (isQF) {
-          // Ensure tokenAmount is normalized to token decimals
           const tokenAmount = args.roundData.matchingFundsAvailable ?? 0;
-          const pyToken = payoutTokens.filter(
+          const tokens = getTokensByChainId(this.chainId);
+          const payoutTokens = tokens;
+          const payoutToken = payoutTokens.filter(
             (t) =>
               t.address.toLowerCase() === args.roundData.token.toLowerCase()
           )[0];
           parsedTokenAmount = parseUnits(
             tokenAmount.toString(),
-            pyToken.decimal
+            payoutToken.decimals
           );
         }
 
@@ -675,22 +675,36 @@ export class AlloV1 implements Allo {
     }
   > {
     return new AlloOperation(async ({ emit }) => {
-      if (args.applicationsToUpdate.some((app) => app.status === "IN_REVIEW")) {
-        throw new AlloError("DirectGrants is not supported yet!");
-      }
+      const isInReview = args.applicationsToUpdate.some(
+        (app) => app.status === "IN_REVIEW"
+      );
 
-      const roundAddress = getAddress(args.roundId);
+      const conf = isInReview
+        ? {
+            bitsPerStatus: 1,
+            address: args.strategyAddress,
+            abi: DirectPayoutStrategyImplementation,
+            functionName: "setApplicationsInReview",
+          }
+        : {
+            bitsPerStatus: 2,
+            address: getAddress(args.roundId),
+            abi: RoundImplementationABI,
+            functionName: "setApplicationStatuses",
+          };
+
       const rows = buildUpdatedRowsOfApplicationStatuses({
         applicationsToUpdate: args.applicationsToUpdate,
         currentApplications: args.currentApplications,
         statusToNumber: applicationStatusToNumber,
-        bitsPerStatus: 2,
+        bitsPerStatus: conf.bitsPerStatus,
       });
 
       const txResult = await sendTransaction(this.transactionSender, {
-        address: roundAddress,
-        abi: RoundImplementationABI,
-        functionName: "setApplicationStatuses",
+        address: conf.address,
+        abi: conf.abi,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        functionName: conf.functionName as any,
         args: [rows],
       });
 
@@ -709,7 +723,6 @@ export class AlloV1 implements Allo {
         emit("transactionStatus", error(result));
         return error(result);
       }
-
       await this.waitUntilIndexerSynced({
         chainId: this.chainId,
         blockNumber: receipt.blockNumber,
@@ -725,6 +738,7 @@ export class AlloV1 implements Allo {
     tokenAddress: Address;
     roundId: string;
     amount: bigint;
+    requireTokenApproval?: boolean;
   }): AlloOperation<
     Result<null>,
     {
@@ -739,7 +753,7 @@ export class AlloV1 implements Allo {
       const roundAddress = getAddress(args.roundId);
       let tx;
 
-      if (args.tokenAddress === zeroAddress) {
+      if (args.tokenAddress === zeroAddress || !args.requireTokenApproval) {
         emit("tokenApprovalStatus", success(null));
       } else {
         const approvalTx = await sendTransaction(this.transactionSender, {
@@ -969,7 +983,7 @@ export class AlloV1 implements Allo {
   }
 
   batchDistributeFunds(args: {
-    payoutStrategy: Address;
+    payoutStrategyOrPoolId: string;
     allProjects: MatchingStatsData[];
     projectIdsToBePaid: string[];
   }): AlloOperation<
@@ -1014,7 +1028,7 @@ export class AlloV1 implements Allo {
       });
 
       const txResult = await sendTransaction(this.transactionSender, {
-        address: args.payoutStrategy,
+        address: getAddress(args.payoutStrategyOrPoolId),
         abi: MerklePayoutStrategyImplementationABI,
         functionName: "payout",
         args: [projectsWithMerkleProof],
@@ -1114,30 +1128,58 @@ export class AlloV1 implements Allo {
        * (and to confuse the developer).
        *  https://github.com/allo-protocol/allo-contracts/blob/9c50f53cbdc2844fbf3cfa760df438f6fe3f0368/contracts/round/RoundImplementation.sol#L339C1-L339C1
        **/
-      if (
-        data.roundStartTime &&
-        data.roundEndTime &&
-        data.applicationsStartTime &&
-        data.applicationsEndTime
-      ) {
-        if (Date.now() > data.applicationsStartTime.getTime()) {
-          data.applicationsStartTime = new Date(
-            data.applicationsEndTime.getTime() - 1000000
-          );
-        }
-        if (Date.now() > data.roundStartTime.getTime()) {
-          data.roundStartTime = new Date(
-            data.applicationsEndTime.getTime() - 1000000
-          );
-        }
+      switch (args.strategy) {
+        case RoundCategory.QuadraticFunding:
+          if (
+            data.roundStartTime &&
+            data.roundEndTime &&
+            data.applicationsStartTime &&
+            data.applicationsEndTime
+          ) {
+            if (Date.now() > data.applicationsStartTime.getTime()) {
+              data.applicationsStartTime = new Date(
+                data.applicationsEndTime.getTime() - 1000000
+              );
+            }
+            if (Date.now() > data.roundStartTime.getTime()) {
+              data.roundStartTime = new Date(
+                data.applicationsEndTime.getTime() - 1000000
+              );
+            }
 
-        transactionBuilder.add(UpdateAction.UPDATE_ROUND_START_AND_END_TIMES, [
-          (data.applicationsStartTime.getTime() / 1000).toFixed(0),
-          (data.applicationsEndTime.getTime() / 1000).toFixed(0),
-          (data.roundStartTime.getTime() / 1000).toFixed(0),
-          (data.roundEndTime.getTime() / 1000).toFixed(0),
-        ]);
+            transactionBuilder.add(
+              UpdateAction.UPDATE_ROUND_START_AND_END_TIMES,
+              [
+                (data.applicationsStartTime.getTime() / 1000).toFixed(0),
+                (data.applicationsEndTime.getTime() / 1000).toFixed(0),
+                (data.roundStartTime.getTime() / 1000).toFixed(0),
+                (data.roundEndTime.getTime() / 1000).toFixed(0),
+              ]
+            );
+          }
+          break;
+
+        case RoundCategory.Direct:
+          if (data.roundStartTime && data.roundEndTime) {
+            if (Date.now() > data.roundStartTime.getTime()) {
+              data.roundStartTime = new Date(
+                data.roundEndTime.getTime() - 1000000
+              );
+            }
+
+            transactionBuilder.add(
+              UpdateAction.UPDATE_ROUND_START_AND_END_TIMES,
+              [
+                (data.roundStartTime.getTime() / 1000).toFixed(0),
+                (data.roundEndTime.getTime() / 1000).toFixed(0),
+                (data.roundStartTime.getTime() / 1000).toFixed(0),
+                (data.roundEndTime.getTime() / 1000).toFixed(0),
+              ]
+            );
+          }
+          break;
       }
+
       const transactionBody = transactionBuilder.generate();
 
       const txResult = await sendRawTransaction(this.transactionSender, {
@@ -1173,8 +1215,102 @@ export class AlloV1 implements Allo {
       return success(args.roundId);
     });
   }
-}
 
+  payoutDirectGrants(args: {
+    roundId: Hex | number; // address
+    token: Hex;
+    amount: bigint;
+    recipientAddress: Hex;
+    recipientId: Hex;
+    vault?: Hex;
+    applicationIndex?: number;
+  }): AlloOperation<
+    Result<{ blockNumber: bigint }>,
+    {
+      transaction: Result<Hex>;
+      transactionStatus: Result<TransactionReceipt>;
+      indexingStatus: Result<void>;
+    }
+  > {
+    return new AlloOperation(async ({ emit }) => {
+      if (typeof args.roundId == "number") {
+        return error(new AlloError("roundId must be a Hex"));
+      }
+
+      if (!args.vault) {
+        return error(new AlloError("vault is required"));
+      }
+
+      if (typeof args.applicationIndex !== "number") {
+        return error(new AlloError("applicationIndex is required"));
+      }
+
+      const functionArguments = {
+        vault: args.vault,
+        token: args.token,
+        amount: BigInt(args.amount.toString()),
+        grantAddress: args.recipientAddress,
+        projectId: args.recipientId,
+        applicationIndex: BigInt(args.applicationIndex),
+        allowanceModule: zeroAddress,
+        allowanceSignature: hexZeroPad("0x", 65) as `0x${string}`,
+      };
+
+      const tx = await sendTransaction(this.transactionSender, {
+        address: args.roundId,
+        abi: DirectPayoutStrategyImplementation,
+        functionName: "payout",
+        args: [functionArguments],
+      });
+
+      emit("transaction", tx);
+
+      if (tx.type === "error") {
+        return tx;
+      }
+
+      let receipt: TransactionReceipt;
+
+      try {
+        receipt = await this.transactionSender.wait(tx.value);
+        emit("transactionStatus", success(receipt));
+      } catch (err) {
+        const result = new AlloError("Failed to payout direct grants");
+        emit("transactionStatus", error(result));
+        return error(result);
+      }
+
+      await this.waitUntilIndexerSynced({
+        chainId: this.chainId,
+        blockNumber: receipt.blockNumber,
+      });
+
+      emit("indexingStatus", success(void 0));
+
+      return success({
+        blockNumber: receipt.blockNumber,
+      });
+    });
+  }
+
+  managePoolManager(args: {
+    poolId: string;
+    manager: Address;
+    addOrRemove: "add" | "remove";
+  }): AlloOperation<
+    Result<null>,
+    {
+      transaction: Result<Hex>;
+      transactionStatus: Result<TransactionReceipt>;
+      indexingStatus: Result<null>;
+    }
+  > {
+    return new AlloOperation(async () => {
+      const result = new AlloError(`Unsupported on v1 ${args}`);
+      return error(result);
+    });
+  }
+}
 // todo: move this out?
 export type CreateRoundArgs = {
   roundMetadata: { protocol: bigint; pointer: string };

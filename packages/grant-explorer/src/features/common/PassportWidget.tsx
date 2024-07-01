@@ -5,11 +5,7 @@ import { ReactComponent as GitcoinPassportLogoFull } from "../../assets/passport
 import { ReactComponent as GitcoinPassportLogo } from "../../assets/passport-logo.svg";
 import { Dropdown as DropdownIcon } from "common/src/icons/Dropdown";
 import { Round } from "data-layer";
-import {
-  ChainId,
-  isRoundUsingPassportLite,
-  roundToPassportURLMap,
-} from "common";
+import { roundToPassportURLMap } from "common";
 import { PassportShield } from "./PassportShield";
 
 type PassportWidgetProps = {
@@ -38,7 +34,8 @@ export function PassportWidget({ round, alignment }: PassportWidgetProps) {
 
   return (
     <>
-      {isRoundUsingPassportLite(round) ? (
+      {round.roundMetadata?.quadraticFundingConfig?.sybilDefense ===
+      "passport-mbds" ? (
         <div title="This round is protected by a combination of Passport’s model-based detection system and specialized donation verification.">
           <GitcoinPassportLogo className="h-8 w-8" />
         </div>
@@ -97,8 +94,8 @@ export function PassportWidget({ round, alignment }: PassportWidgetProps) {
                         passportColor === "green"
                           ? "bg-green-100"
                           : passportColor === "yellow"
-                          ? "bg-yellow-100"
-                          : "bg-orange-100"
+                            ? "bg-yellow-100"
+                            : "bg-orange-100"
                       } w-40 p-4 justify-start rounded-2xl`}
                     >
                       <p className="mb-2">Passport Score</p>
@@ -111,8 +108,8 @@ export function PassportWidget({ round, alignment }: PassportWidgetProps) {
                         passportColor === "green"
                           ? "bg-green-100"
                           : passportColor === "yellow"
-                          ? "bg-yellow-100"
-                          : "bg-orange-100"
+                            ? "bg-yellow-100"
+                            : "bg-orange-100"
                       } w-40 p-4 justify-start rounded-2xl`}
                     >
                       <p className="mb-2">Donation Impact</p>
@@ -124,7 +121,7 @@ export function PassportWidget({ round, alignment }: PassportWidgetProps) {
                   <p className="text-left text-xs font-dm-mono">
                     Your donation impact is calculated based on your Passport
                     score.
-                    {round.chainId !== ChainId.AVALANCHE && (
+                    {round.chainId !== 43114 && ( // Avalanche chain
                       <span>
                         Scores higher than 15 will begin to be eligible for
                         matching, and your donation impact scales as your
@@ -135,7 +132,7 @@ export function PassportWidget({ round, alignment }: PassportWidgetProps) {
                       {" "}
                       You can update your score by heading over to Passport.{" "}
                     </span>
-                    {round.chainId === ChainId.AVALANCHE && (
+                    {round.chainId === 43114 && ( // Avalanche chain
                       <span>
                         To learn more about the Avalanche Custom Scorer, click{" "}
                         <a

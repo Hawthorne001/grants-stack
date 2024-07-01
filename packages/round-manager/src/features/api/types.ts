@@ -1,4 +1,4 @@
-/**
+ /**
  * Supported EVM networks
  */
 import { Signer } from "@ethersproject/abstract-signer";
@@ -8,7 +8,7 @@ import { RoundVisibilityType } from "common";
 import { BigNumber } from "ethers";
 import { Address } from "viem";
 import { SchemaQuestion } from "./utils";
-import { RoundForManager } from "data-layer";
+import { AddressAndRole, RoundForManager, SybilDefense } from "data-layer";
 
 export type Network = "optimism" | "fantom" | "pgn";
 
@@ -110,6 +110,9 @@ export interface Program {
   };
 
   tags?: string[];
+  roles?: AddressAndRole[];
+  qfRoundsCount?: number;
+  dgRoundsCount?: number;
 }
 
 export type InputType =
@@ -146,6 +149,7 @@ export interface ApplicationMetadata {
 }
 
 export interface Round {
+  strategyName: string;
   /**
    * The on-chain unique round ID
    */
@@ -170,7 +174,7 @@ export interface Round {
       matchingCapAmount?: number;
       minDonationThreshold?: boolean;
       minDonationThresholdAmount?: number;
-      sybilDefense?: boolean;
+      sybilDefense?: SybilDefense;
     };
     support?: {
       type: string;
@@ -240,6 +244,10 @@ export interface Round {
    */
   operatorWallets?: Array<string>;
   /**
+   * List of addresses and their roles in the round
+   */
+  roles?: AddressAndRole[];
+  /**
    * List of projects approved for the round
    */
   approvedProjects?: ApprovedProject[];
@@ -279,6 +287,7 @@ export type MatchingStatsData = {
   matchPoolPercentage: number;
   projectId: string;
   applicationId: string;
+  anchorAddress?: string;
   matchAmountInToken: BigNumber;
   originalMatchAmountInToken: BigNumber;
   projectPayoutAddress: string;
@@ -464,4 +473,15 @@ export type Project = {
 export type TransactionBlock = {
   transactionBlockNumber: number;
   error?: unknown;
+};
+
+export type RevisedMatch = {
+  revisedContributionCount: number;
+  revisedMatch: bigint;
+  matched: bigint;
+  contributionsCount: number;
+  projectId: string;
+  applicationId: string;
+  projectName: string;
+  payoutAddress: string;
 };

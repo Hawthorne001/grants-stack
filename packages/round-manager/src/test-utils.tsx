@@ -51,12 +51,15 @@ export const makeProgramData = (overrides: Partial<Program> = {}): Program => ({
   metadata: {
     name: faker.company.bsBuzz(),
   },
-  // TODO add this back in for createProgram
-  // store: {
-  //   protocol: randomInt(1, 10),
-  //   pointer: faker.random.alpha({ count: 59, casing: "lower" })
-  // },
   operatorWallets: [mockedOperatorWallet],
+  roles: [
+    {
+      address: mockedOperatorWallet,
+      role: "OWNER",
+      createdAtBlock: "0",
+    },
+  ],
+  tags: ["program"],
   ...overrides,
 });
 
@@ -69,6 +72,7 @@ export const makeRoundData = (overrides: Partial<Round> = {}): Round => {
   const protocolFeePercentage = 10000;
   return {
     id: faker.finance.ethereumAddress(),
+    strategyName: "allov2.DonationVotingMerkleDistributionDirectTransferStrategy",
     chainId: 1,
     roundMetadata: {
       name: faker.company.name(),
@@ -88,7 +92,7 @@ export const makeRoundData = (overrides: Partial<Round> = {}): Round => {
         matchingFundsAvailable: 1000,
         minDonationThreshold: true,
         minDonationThresholdAmount: 1,
-        sybilDefense: false,
+        sybilDefense: "none",
       },
     },
     applicationsStartTime,
@@ -106,8 +110,15 @@ export const makeRoundData = (overrides: Partial<Round> = {}): Round => {
     roundFeePercentage,
     ownedBy: faker.finance.ethereumAddress(),
     operatorWallets: [mockedOperatorWallet],
+    roles: [
+      {
+        address: mockedOperatorWallet,
+        role: "OWNER",
+        createdAtBlock: "0",
+      },
+    ],
     finalized: false,
-    tags: ["allo-v1"],
+    tags: ["allo-v2"],
     matchAmount: 0n,
     matchAmountInUsd: 0,
     fundedAmount: 0n,
@@ -129,6 +140,7 @@ export const makeDirectGrantRoundData = (
   const protocolFeePercentage = 10000;
   return {
     id: faker.finance.ethereumAddress(),
+    strategyName: "allov2.DonationVotingMerkleDistributionDirectTransferStrategy",
     chainId: 1,
     roundMetadata: {
       name: faker.company.name(),
@@ -148,7 +160,7 @@ export const makeDirectGrantRoundData = (
         matchingFundsAvailable: 1000,
         minDonationThreshold: true,
         minDonationThresholdAmount: 1,
-        sybilDefense: false,
+        sybilDefense: "none",
       },
     },
     applicationsStartTime,
@@ -166,6 +178,13 @@ export const makeDirectGrantRoundData = (
     roundFeePercentage,
     ownedBy: faker.finance.ethereumAddress(),
     operatorWallets: [mockedOperatorWallet],
+    roles: [
+      {
+        address: mockedOperatorWallet,
+        role: "OWNER",
+        createdAtBlock: "0",
+      },
+    ],
     finalized: false,
     matchAmount: 0n,
     matchAmountInUsd: 0,

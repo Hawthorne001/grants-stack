@@ -2,15 +2,23 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import { CartProject, ProgressStatus } from "./features/api/types";
-import { Allo, ChainId } from "common";
+import {
+  AlloV2,
+  createEthersTransactionSender,
+  createPinataIpfsUploader,
+  createWaitForIndexerSyncTo,
+  getChainById,
+} from "common";
 import { useCartStorage } from "./store";
 import {
+  getContract,
   Hex,
   InternalRpcError,
   parseAbi,
   parseUnits,
   SwitchChainError,
   UserRejectedRequestError,
+  WalletClient,
   zeroAddress,
 } from "viem";
 import {
@@ -21,39 +29,38 @@ import {
 } from "./features/api/voting";
 import { groupBy, uniq } from "lodash-es";
 import { getEnabledChains } from "./app/chainConfig";
-import { WalletClient } from "wagmi";
-import { getContract, getPublicClient } from "@wagmi/core";
 import { getPermitType } from "common/dist/allo/voting";
-import { MRC_CONTRACTS } from "common/dist/allo/addresses/mrc";
 import { getConfig } from "common/src/config";
 import { DataLayer } from "data-layer";
+import { getEthersProvider, getEthersSigner } from "./app/wagmi";
+import { Connector } from "wagmi";
 
-type ChainMap<T> = Record<ChainId, T>;
+type ChainMap<T> = Record<number, T>;
 
 const isV2 = getConfig().allo.version === "allo-v2";
 interface CheckoutState {
   permitStatus: ChainMap<ProgressStatus>;
   setPermitStatusForChain: (
-    chain: ChainId,
+    chain: number,
     permitStatus: ProgressStatus
   ) => void;
   voteStatus: ChainMap<ProgressStatus>;
-  setVoteStatusForChain: (chain: ChainId, voteStatus: ProgressStatus) => void;
+  setVoteStatusForChain: (chain: number, voteStatus: ProgressStatus) => void;
   chainSwitchStatus: ChainMap<ProgressStatus>;
   setChainSwitchStatusForChain: (
-    chain: ChainId,
+    chain: number,
     voteStatus: ProgressStatus
   ) => void;
-  currentChainBeingCheckedOut?: ChainId;
-  chainsToCheckout: ChainId[];
-  setChainsToCheckout: (chains: ChainId[]) => void;
+  currentChainBeingCheckedOut?: number;
+  chainsToCheckout: number[];
+  setChainsToCheckout: (chains: number[]) => void;
   /** Checkout the given chains
    * this has the side effect of adding the chains to the wallet if they are not yet present
    * We get the data necessary to construct the votes from the cart store */
   checkout: (
-    chainsToCheckout: { chainId: ChainId; permitDeadline: number }[],
+    chainsToCheckout: { chainId: number; permitDeadline: number }[],
     walletClient: WalletClient,
-    allo: Allo,
+    connector: Connector,
     dataLayer: DataLayer
   ) => Promise<void>;
   getCheckedOutProjects: () => CartProject[];
@@ -63,7 +70,7 @@ interface CheckoutState {
 
 const defaultProgressStatusForAllChains = Object.fromEntries(
   Object.values(getEnabledChains()).map((value) => [
-    value.id as ChainId,
+    value.id as number,
     ProgressStatus.NOT_STARTED,
   ])
 ) as ChainMap<ProgressStatus>;
@@ -71,18 +78,18 @@ const defaultProgressStatusForAllChains = Object.fromEntries(
 export const useCheckoutStore = create<CheckoutState>()(
   devtools((set, get) => ({
     permitStatus: defaultProgressStatusForAllChains,
-    setPermitStatusForChain: (chain: ChainId, permitStatus: ProgressStatus) =>
+    setPermitStatusForChain: (chain: number, permitStatus: ProgressStatus) =>
       set((oldState) => ({
         permitStatus: { ...oldState.permitStatus, [chain]: permitStatus },
       })),
     voteStatus: defaultProgressStatusForAllChains,
-    setVoteStatusForChain: (chain: ChainId, voteStatus: ProgressStatus) =>
+    setVoteStatusForChain: (chain: number, voteStatus: ProgressStatus) =>
       set((oldState) => ({
         voteStatus: { ...oldState.voteStatus, [chain]: voteStatus },
       })),
     chainSwitchStatus: defaultProgressStatusForAllChains,
     setChainSwitchStatusForChain: (
-      chain: ChainId,
+      chain: number,
       chainSwitchStatus: ProgressStatus
     ) =>
       set((oldState) => ({
@@ -93,15 +100,15 @@ export const useCheckoutStore = create<CheckoutState>()(
       })),
     currentChainBeingCheckedOut: undefined,
     chainsToCheckout: [],
-    setChainsToCheckout: (chains: ChainId[]) => {
+    setChainsToCheckout: (chains: number[]) => {
       set({
         chainsToCheckout: chains,
       });
     },
     checkout: async (
-      chainsToCheckout: { chainId: ChainId; permitDeadline: number }[],
+      chainsToCheckout: { chainId: number; permitDeadline: number }[],
       walletClient: WalletClient,
-      allo: Allo
+      connector: Connector
     ) => {
       const chainIdsToCheckOut = chainsToCheckout.map((chain) => chain.chainId);
       get().setChainsToCheckout(
@@ -122,7 +129,7 @@ export const useCheckoutStore = create<CheckoutState>()(
 
       const totalDonationPerChain = Object.fromEntries(
         Object.entries(projectsByChain).map(([key, value]) => [
-          Number(key) as ChainId,
+          Number(key) as number,
           value
             .map((project) => project.amount)
             .reduce(
@@ -130,7 +137,7 @@ export const useCheckoutStore = create<CheckoutState>()(
                 acc +
                 parseUnits(
                   amount ? amount : "0",
-                  getVotingTokenForChain(Number(key) as ChainId).decimal
+                  getVotingTokenForChain(Number(key) as number).decimals
                 ),
               0n
             ),
@@ -150,7 +157,8 @@ export const useCheckoutStore = create<CheckoutState>()(
         /* Switch to the current chain */
         await switchToChain(chainId, walletClient, get);
 
-        const token = getVotingTokenForChain(chainId);
+        const token = await getVotingTokenForChain(chainId);
+        const chain = getChainById(chainId);
 
         let sig;
         let nonce;
@@ -160,23 +168,23 @@ export const useCheckoutStore = create<CheckoutState>()(
           try {
             get().setPermitStatusForChain(chainId, ProgressStatus.IN_PROGRESS);
 
-            const owner = walletClient.account.address;
+            const owner = walletClient!.account!.address!;
+
             /* Get nonce and name from erc20 contract */
             const erc20Contract = getContract({
-              address: token.address as Hex,
+              address: token.address,
               abi: parseAbi([
                 "function nonces(address) public view returns (uint256)",
                 "function name() public view returns (string)",
               ]),
-              walletClient,
-              chainId,
+              client: walletClient,
             });
             nonce = await erc20Contract.read.nonces([owner]);
             const tokenName = await erc20Contract.read.name();
-            if (getPermitType(token) === "dai") {
+            if (getPermitType(token, chainId) === "dai") {
               sig = await signPermitDai({
                 walletClient: walletClient,
-                spenderAddress: MRC_CONTRACTS[chainId],
+                spenderAddress: chain.contracts.multiRoundCheckout,
                 chainId,
                 deadline: BigInt(deadline),
                 contractAddress: token.address,
@@ -189,7 +197,7 @@ export const useCheckoutStore = create<CheckoutState>()(
               sig = await signPermit2612({
                 walletClient: walletClient,
                 value: totalDonationPerChain[chainId],
-                spenderAddress: MRC_CONTRACTS[chainId],
+                spenderAddress: chain.contracts.multiRoundCheckout,
                 nonce,
                 chainId,
                 deadline: BigInt(deadline),
@@ -246,7 +254,7 @@ export const useCheckoutStore = create<CheckoutState>()(
           for (const roundId in groupedDonations) {
             groupedAmounts[roundId] = groupedDonations[roundId].reduce(
               (acc, donation) =>
-                acc + parseUnits(donation.amount, token.decimal),
+                acc + parseUnits(donation.amount, token.decimals),
               0n
             );
           }
@@ -254,14 +262,26 @@ export const useCheckoutStore = create<CheckoutState>()(
           const amountArray: bigint[] = [];
           for (const roundId in groupedDonations) {
             groupedDonations[roundId].map((donation) => {
-              amountArray.push(parseUnits(donation.amount, token.decimal));
+              amountArray.push(parseUnits(donation.amount, token.decimals));
             });
           }
 
-          const receipt = await allo.donate(
-            getPublicClient({
-              chainId,
+          const alloInstance = new AlloV2({
+            chainId,
+            transactionSender: createEthersTransactionSender(
+              await getEthersSigner(connector, chainId),
+              getEthersProvider(chainId)!
+            ),
+            ipfsUploader: createPinataIpfsUploader({
+              token: getConfig().pinata.jwt,
+              endpoint: `${getConfig().pinata.baseUrl}/pinning/pinFileToIPFS`,
             }),
+            waitUntilIndexerSynced: createWaitForIndexerSyncTo(
+              `${getConfig().dataLayer.gsIndexerEndpoint}/graphql`
+            ),
+          });
+
+          const receipt = await alloInstance.donate(
             chainId,
             token,
             groupedEncodedVotes,
@@ -336,7 +356,7 @@ export const useCheckoutStore = create<CheckoutState>()(
 /** This function handles switching to a chain
  * if the chain is not present in the wallet, it will add it, and then switch */
 async function switchToChain(
-  chainId: ChainId,
+  chainId: number,
   walletClient: WalletClient,
   get: () => CheckoutState
 ) {
@@ -366,10 +386,31 @@ async function switchToChain(
           chain: {
             id: nextChainData.id,
             name: nextChainData.name,
-            network: nextChainData.network,
-            nativeCurrency: nextChainData.nativeCurrency,
-            rpcUrls: nextChainData.rpcUrls,
-            blockExplorers: nextChainData.blockExplorers,
+            blockExplorers: {
+              default: {
+                name: `${nextChainData.prettyName} Explorer`,
+                url: nextChainData.blockExplorer,
+              },
+            },
+            nativeCurrency: {
+              decimals: nextChainData.tokens.find(
+                (token) => token.address === zeroAddress
+              )?.decimals as number,
+              name: nextChainData.tokens.find(
+                (token) => token.address === zeroAddress
+              )?.code as string,
+              symbol: nextChainData.tokens.find(
+                (token) => token.address === zeroAddress
+              )?.code as string,
+            },
+            rpcUrls: {
+              default: {
+                http: [nextChainData.rpc],
+              },
+              public: {
+                http: [nextChainData.rpc],
+              },
+            },
           },
         });
       } catch (e) {

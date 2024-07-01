@@ -18,7 +18,6 @@ import {
 } from "react-router-dom";
 import ConfirmationModal from "../common/ConfirmationModal";
 import Navbar from "../common/Navbar";
-import { useWallet } from "../common/Auth";
 import { Button } from "common/src/styles";
 import { ReactComponent as TwitterIcon } from "../../assets/twitter-logo.svg";
 import { ReactComponent as GithubIcon } from "../../assets/github-logo.svg";
@@ -39,7 +38,6 @@ import {
 } from "../api/types";
 import { VerifiableCredential } from "@gitcoinco/passport-sdk-types";
 import { Lit } from "../api/lit";
-import { utils } from "ethers";
 import NotFoundPage from "../common/NotFoundPage";
 import AccessDenied from "../common/AccessDenied";
 import { Spinner } from "../common/Spinner";
@@ -49,10 +47,10 @@ import ErrorModal from "../common/ErrorModal";
 import { errorModalDelayMs } from "../../constants";
 import {
   RoundName,
-  ViewGrantsExplorerButton,
-  ApplicationOpenDateRange,
   RoundOpenDateRange,
   RoundBadgeStatus,
+  isDirectRound,
+  ApplicationOpenDateRange,
 } from "./ViewRoundPage";
 
 import {
@@ -69,8 +67,8 @@ import { getPayoutRoundDescription } from "../common/Utils";
 import moment from "moment";
 import ApplicationDirectPayout from "./ApplicationDirectPayout";
 import { useApplicationsByRoundId } from "../common/useApplicationsByRoundId";
-import { getAddress } from "ethers/lib/utils.js";
-import { getAlloAddress } from "common/dist/allo/backends/allo-v2";
+import { useAccount } from "wagmi";
+import { ViewGrantsExplorerButton } from "../common/ViewGrantsExplorerButton";
 
 type Status = "done" | "current" | "rejected" | "approved" | undefined;
 
@@ -109,8 +107,13 @@ export default function ViewApplicationPage() {
     twitter: VerifiedCredentialState.PENDING,
   });
 
-  const { roundId, id } = useParams() as { roundId: string; id: string };
-  const { chain, address } = useWallet();
+  const { chainId, roundId, id } = useParams() as {
+    chainId?: string;
+    roundId: string;
+    id: string;
+  };
+  const { chain, address } = useAccount();
+  const roundChainId = chainId ? Number(chainId) : chain?.id;
 
   const { data: applications, isLoading } = useApplicationsByRoundId(roundId!);
   const filteredApplication = applications?.filter((a) => a.id == id) || [];
@@ -191,9 +194,9 @@ export default function ViewApplicationPage() {
       };
       verify();
     }
-  }, [application, application?.project?.owners, isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [application, application?.project?.owners, isLoading, verifiedProviders]);
 
-  const { round } = useRoundById(roundId);
+  const { round } = useRoundById(roundChainId!, roundId);
   const allo = useAllo();
 
   const handleReview = async () => {
@@ -289,8 +292,8 @@ export default function ViewApplicationPage() {
         return;
       }
 
-      if (round) {
-        setHasAccess(!!round.operatorWallets?.includes(address?.toLowerCase()));
+      if (round && address) {
+        setHasAccess(!!round.operatorWallets?.includes(address.toLowerCase()));
       }
     }
   }, [address, application, isLoading, round, debugModeEnabled]);
@@ -321,7 +324,7 @@ export default function ViewApplicationPage() {
               const encryptedString: Blob = await response.blob();
 
               const lit = new Lit({
-                chainId: chain.id,
+                chainId: Number(chainId!),
                 contract: roundId.startsWith("0x")
                   ? roundId
                   : round?.payoutStrategy.id ?? "",
@@ -370,15 +373,15 @@ export default function ViewApplicationPage() {
     return (
       <div className="relative">
         <div
-          className={`flex items-center justify-center rounded-full w-[24px] h-[24px] border-[2px] z-10 relative bg-white
+          className={`flex items-center justify-center rounded-full w-[24px] h-[24px] border-[2px] z-10 relative
         ${
           status === "done" || status === "approved"
             ? "bg-teal-500 border-teal-500"
             : status === "current"
-            ? "border-violet-500"
-            : status === "rejected"
-            ? "bg-red-500 border-red-500"
-            : ""
+              ? "border-violet-500"
+              : status === "rejected"
+                ? "bg-red-500 border-red-500"
+                : ""
         }
         `}
         >
@@ -413,8 +416,8 @@ export default function ViewApplicationPage() {
               status === "done"
                 ? "bg-teal-500"
                 : status === "rejected"
-                ? "bg-red-500"
-                : "bg-grey-200"
+                  ? "bg-red-500"
+                  : "bg-grey-200"
             }`}
             style={{
               transform: "rotate(180deg)",
@@ -526,14 +529,14 @@ export default function ViewApplicationPage() {
               </div>
             )}
             <div className="flex flex-row flex-wrap relative">
-              {round && strategyType === "DirectGrants" && (
-                <ApplicationOpenDateRange round={round} />
+              {round && <ApplicationOpenDateRange round={round} />}
+              {round && !isDirectRound(round) && (
+                <RoundOpenDateRange round={round} />
               )}
-              {round && <RoundOpenDateRange round={round} />}
               <div className="absolute right-0">
                 <ViewGrantsExplorerButton
                   iconStyle="h-4 w-4"
-                  chainId={`${chain.id}`}
+                  chainId={`${chainId}`}
                   roundId={id}
                 />
               </div>

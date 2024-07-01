@@ -1,18 +1,18 @@
 import { Signer } from "@ethersproject/abstract-signer";
 import { ApplicationStatus, DistributionMatch, Round } from "data-layer";
-import { Address, Hex, PublicClient } from "viem";
-import { AnyJson, ChainId } from "..";
+import { Address, Hex } from "viem";
+import { AnyJson } from "..";
 import {
   CreateRoundData,
   RoundCategory,
   UpdateRoundParams,
   MatchingStatsData,
-  VotingToken,
 } from "../types";
 import { Result } from "./common";
 import { AlloOperation } from "./operation";
 import { TransactionReceipt } from "./transaction-sender";
 import { PermitSignature } from "./voting";
+import { TToken } from "@gitcoin/gitcoin-chain-data";
 
 export type CreateRoundArguments = {
   roundData: {
@@ -112,9 +112,8 @@ export interface Allo {
   >;
 
   donate: (
-    publicClient: PublicClient,
-    chainId: ChainId,
-    token: VotingToken,
+    chainId: number,
+    token: TToken,
     groupedVotes: Record<string, Hex[]>,
     groupedAmounts: Record<string, bigint> | bigint[],
     nativeTokenAmount: bigint,
@@ -136,6 +135,7 @@ export interface Allo {
       index: number;
       status: ApplicationStatus;
     }[];
+    strategy?: RoundCategory;
   }) => AlloOperation<
     Result<void>,
     {
@@ -149,6 +149,7 @@ export interface Allo {
     tokenAddress: Address;
     roundId: string;
     amount: bigint;
+    requireTokenApproval?: boolean;
   }) => AlloOperation<
     Result<null>,
     {
@@ -202,9 +203,39 @@ export interface Allo {
   >;
 
   batchDistributeFunds: (args: {
-    payoutStrategy: Address;
+    payoutStrategyOrPoolId: string;
     allProjects: MatchingStatsData[];
     projectIdsToBePaid: string[];
+  }) => AlloOperation<
+    Result<null>,
+    {
+      transaction: Result<Hex>;
+      transactionStatus: Result<TransactionReceipt>;
+      indexingStatus: Result<null>;
+    }
+  >;
+
+  payoutDirectGrants: (args: {
+    roundId: Hex | number;
+    token: Hex;
+    amount: bigint;
+    recipientAddress: Hex;
+    recipientId: Hex;
+    vault?: Hex;
+    applicationIndex?: number;
+  }) => AlloOperation<
+    Result<{ blockNumber: bigint }>,
+    {
+      transaction: Result<Hex>;
+      transactionStatus: Result<TransactionReceipt>;
+      indexingStatus: Result<void>;
+    }
+  >;
+
+  managePoolManager: (args: {
+    poolId: string;
+    manager: Address;
+    addOrRemove: "add" | "remove";
   }) => AlloOperation<
     Result<null>,
     {

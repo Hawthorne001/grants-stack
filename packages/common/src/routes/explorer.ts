@@ -1,7 +1,5 @@
-import { ChainId } from "../chain-ids";
-
 export function applicationPath(p: {
-  chainId: ChainId;
+  chainId: number;
   roundId: string;
   applicationId: string;
 }): string {
@@ -10,4 +8,8 @@ export function applicationPath(p: {
 
 export function collectionPath(collectionCid: string): string {
   return `/#/collections/${collectionCid}`;
+}
+
+export function projectPath(p: { projectId: string }): string {
+  return `/#/projects/${p.projectId}`;
 }

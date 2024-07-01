@@ -1,12 +1,19 @@
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { Tab } from "@headlessui/react";
 import { ExclamationCircleIcon as NonFinalizedRoundIcon } from "@heroicons/react/outline";
-import { classNames, getTxBlockExplorerLink, useTokenPrice } from "common";
+import {
+  TToken,
+  classNames,
+  getPayoutTokens,
+  getTxBlockExplorerLink,
+  useTokenPrice,
+} from "common";
 import { BigNumber, ethers } from "ethers";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import tw from "tailwind-styled-components";
-import { useBalance } from "wagmi";
+import { useAccount, useBalance } from "wagmi";
 import { errorModalDelayMs, modalDelayMs } from "../../constants";
 import { useGroupProjectsByPaymentStatus } from "../api/payoutStrategy/payoutStrategy";
 import {
@@ -14,16 +21,12 @@ import {
   ProgressStatus,
   ProgressStep,
   Round,
-  TransactionBlock,
 } from "../api/types";
 import { formatCurrency } from "../api/utils";
-import { useWallet } from "../common/Auth";
 import ConfirmationModal from "../common/ConfirmationModal";
 import InfoModal from "../common/InfoModal";
 import ProgressModal from "../common/ProgressModal";
-import { Spinner } from "../common/Spinner";
 import { assertAddress } from "common/src/address";
-import { PayoutToken, payoutTokens } from "../api/payoutTokens";
 import { useAllo } from "common";
 import { getAddress } from "viem";
 import { getConfig } from "common/src/config";
@@ -32,18 +35,42 @@ export default function ViewFundGrantees(props: {
   round: Round | undefined;
   isRoundFinalized: boolean | undefined;
 }) {
-  const [isFundGranteesFetched] = useState(false);
+  const [paidProjects, setPaidProjects] = useState<MatchingStatsData[]>([]);
+  const [unpaidProjects, setUnpaidProjects] = useState<MatchingStatsData[]>([]);
+  const [price, setPrice] = useState<number>(0);
 
-  if (isFundGranteesFetched) {
-    return <Spinner text="We're fetching your data." />;
-  }
+  const payoutTokens = getPayoutTokens(props.round!.chainId!);
+  const matchingFundPayoutToken: TToken | undefined = payoutTokens.find(
+    (t) => t.address.toLowerCase() === props.round!.token.toLowerCase()
+  );
+
+  const tokenRedstoneId = matchingFundPayoutToken?.redstoneTokenId;
+  const { data, error, loading } = useTokenPrice(tokenRedstoneId);
+  const { chainId } = useAccount();
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  const projects = useGroupProjectsByPaymentStatus(chainId!, props.round!);
+
+  useEffect(() => {
+    if (data && !error && !loading) {
+      setPrice(Number(data));
+    }
+    setPaidProjects(projects["paid"]);
+    setUnpaidProjects(projects["unpaid"]);
+  }, [projects, data, error, loading]);
 
   return (
     <div className="flex flex-center flex-col mx-auto mt-3">
       <p className="text-xl">Fund Grantees</p>
       {props.isRoundFinalized ? (
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        <FinalizedRoundContent round={props.round!} />
+        <FinalizedRoundContent
+          round={props.round!}
+          allProjects={projects.all}
+          paidProjects={paidProjects}
+          unpaidProjects={unpaidProjects}
+          matchingFundPayoutToken={matchingFundPayoutToken!}
+          price={price}
+          chain={{ id: chainId! }}
+        />
       ) : (
         <NonFinalizedRoundContent />
       )}
@@ -92,33 +119,15 @@ const TabApplicationCounter = tw.div`
     font-normal
     `;
 
-function FinalizedRoundContent(props: { round: Round }) {
-  const { chain } = useWallet();
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  const projects = useGroupProjectsByPaymentStatus(chain?.id, props.round);
-  const [paidProjects, setPaidProjects] = useState<MatchingStatsData[]>([]);
-  const [unpaidProjects, setUnpaidProjects] = useState<MatchingStatsData[]>([]);
-  const [price, setPrice] = useState<number>(0);
-
-  const matchingFundPayoutToken: PayoutToken = payoutTokens.filter(
-    (t) =>
-      t.address.toLowerCase() == props.round.token.toLowerCase() &&
-      t.chainId == props.round.chainId
-  )[0];
-
-  const { data, error, loading } = useTokenPrice(
-    matchingFundPayoutToken?.redstoneTokenId
-  );
-
-  useEffect(() => {
-    if (data && !error && !loading) {
-      setPrice(Number(data));
-    }
-    setPaidProjects(projects["paid"]);
-    setUnpaidProjects(projects["unpaid"]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projects]);
-
+function FinalizedRoundContent(props: {
+  round: Round;
+  allProjects: MatchingStatsData[];
+  paidProjects: MatchingStatsData[];
+  unpaidProjects: MatchingStatsData[];
+  matchingFundPayoutToken: TToken;
+  price: number;
+  chain: { id: number };
+}) {
   /* Fetch distributions data for this round */
   return (
     <div>
@@ -135,7 +144,7 @@ function FinalizedRoundContent(props: { round: Round }) {
                         className={selected ? "bg-violet-100" : "bg-grey-150"}
                         data-testid="received-application-counter"
                       >
-                        {unpaidProjects.length}
+                        {props.unpaidProjects.length}
                       </TabApplicationCounter>
                     </div>
                   )}
@@ -148,7 +157,7 @@ function FinalizedRoundContent(props: { round: Round }) {
                         className={selected ? "bg-violet-100" : "bg-grey-150"}
                         data-testid="received-application-counter"
                       >
-                        {paidProjects.length}
+                        {props.paidProjects.length}
                       </TabApplicationCounter>
                     </div>
                   )}
@@ -159,21 +168,21 @@ function FinalizedRoundContent(props: { round: Round }) {
           <Tab.Panels className="basis-5/6">
             <Tab.Panel>
               <PayProjectsTable
-                projects={unpaidProjects}
+                projects={props.unpaidProjects}
                 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                token={matchingFundPayoutToken!}
-                price={price}
+                token={props.matchingFundPayoutToken!}
+                price={props.price}
                 round={props.round}
-                allProjects={projects.all}
+                allProjects={props.allProjects}
               />
             </Tab.Panel>
             <Tab.Panel>
               <PaidProjectsTable
-                projects={paidProjects}
-                chainId={chain?.id}
+                projects={props.paidProjects}
+                chainId={props.chain?.id}
                 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                token={matchingFundPayoutToken!}
-                price={price}
+                token={props.matchingFundPayoutToken!}
+                price={props.price}
               />
             </Tab.Panel>
           </Tab.Panels>
@@ -186,14 +195,11 @@ function FinalizedRoundContent(props: { round: Round }) {
 // TODO: Add types
 export function PayProjectsTable(props: {
   projects: MatchingStatsData[];
-  token: PayoutToken;
+  token: TToken;
   price: number;
   round: Round;
   allProjects: MatchingStatsData[];
 }) {
-  // TODO: Add button check
-  // TOOD: Connect wallet and payout contracts to pay grantees
-  const { signer } = useWallet();
   const allo = useAllo();
   const alloVersion = getConfig().allo.version;
   const roundId = props.round.id;
@@ -207,19 +213,15 @@ export function PayProjectsTable(props: {
   const [showConfirmationModal, setShowConfirmationModal] =
     useState<boolean>(false);
   const [showInfoModal, setShowInfoModal] = useState<boolean>(false);
-
   const [
     openReadyForDistributionProgressModal,
     setOpenReadyForDistributionProgressModal,
   ] = useState(false);
-
   const [finalizingDistributionStatus, setFinalizingDistributionStatus] =
     useState<ProgressStatus>(ProgressStatus.IN_PROGRESS);
-
   const [indexingStatus, setIndexingStatus] = useState<ProgressStatus>(
     ProgressStatus.NOT_STARTED
   );
-
   const tokenDetail =
     props.token.address == ethers.constants.AddressZero
       ? { address: assertAddress(props.round?.payoutStrategy.id) }
@@ -227,10 +229,8 @@ export function PayProjectsTable(props: {
           address: assertAddress(props.round?.payoutStrategy.id),
           token: assertAddress(props.token.address),
         };
-
   const tokenBalance = useBalance(tokenDetail);
   const navigate = useNavigate();
-
   const distributionSteps: ProgressStep[] = [
     {
       name: "Distributing Funds",
@@ -303,12 +303,15 @@ export function PayProjectsTable(props: {
     if (roundId) {
       const result = await allo
         .batchDistributeFunds({
-          payoutStrategy:
+          payoutStrategyOrPoolId:
             alloVersion === "allo-v1"
               ? getAddress(props.round.payoutStrategy.id)
-              : getAddress(props.round.id),
+              : props.round.id,
           allProjects: props.allProjects,
-          projectIdsToBePaid: selectedProjects.map((p) => p.projectId),
+          projectIdsToBePaid:
+            alloVersion === "allo-v1"
+              ? selectedProjects.map((p) => p.projectId)
+              : selectedProjects.map((p) => p.anchorAddress ?? ""),
         })
         .on("transaction", (result) => {
           if (result.type === "error") {
@@ -464,17 +467,17 @@ export function PayProjectsTable(props: {
                       <td className="px-3 py-3.5 text-sm font-medium text-gray-900">
                         {formatCurrency(
                           project.matchAmountInToken,
-                          props.token.decimal,
+                          props.token.decimals,
                           4
                         )}
-                        {" " + props.token.name.toUpperCase()}
+                        {" " + props.token.code.toUpperCase()}
                         {Boolean(props.price) &&
                           " ($" +
                             formatCurrency(
                               project.matchAmountInToken
                                 .mul(Math.trunc(props.price * 10000))
                                 .div(10000),
-                              props.token.decimal,
+                              props.token.decimals,
                               2
                             ) +
                             " USD) "}
@@ -512,9 +515,9 @@ export function PayProjectsTable(props: {
                 (acc: BigNumber, cur) => acc.add(cur.matchAmountInToken),
                 BigNumber.from(0)
               ),
-              props.token.decimal
+              props.token.decimals
             )}
-            symbol={props.token.name.toUpperCase()}
+            symbol={props.token.code.toUpperCase()}
           />
         }
         isOpen={showConfirmationModal}
@@ -547,7 +550,7 @@ export function PayProjectsTable(props: {
 export function PaidProjectsTable(props: {
   projects: MatchingStatsData[];
   chainId: number;
-  token: PayoutToken;
+  token: TToken;
   price: number;
 }) {
   return (
@@ -618,17 +621,18 @@ export function PaidProjectsTable(props: {
                         {project.matchPoolPercentage * 100}%
                       </td>
                       <td className="px-3 py-3.5 text-sm font-medium text-gray-900">
-                        {ethers.utils.formatEther(
-                          project.matchAmountInToken.toString()
+                        {ethers.utils.formatUnits(
+                          project.matchAmountInToken.toString(),
+                          props.token.decimals
                         )}
-                        {" " + props.token.name.toUpperCase()}
+                        {" " + props.token.code.toUpperCase()}
                         {Boolean(props.price) &&
                           " ($" +
                             formatCurrency(
                               project.matchAmountInToken
                                 .mul(Math.trunc(props.price * 10000))
                                 .div(10000),
-                              props.token.decimal,
+                              props.token.decimals,
                               2
                             ) +
                             " USD) "}

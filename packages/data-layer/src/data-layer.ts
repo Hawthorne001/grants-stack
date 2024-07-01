@@ -24,6 +24,8 @@ import {
   Contribution,
   RoundForExplorer,
   ExpandedApplicationRef,
+  RoundApplicationPayout,
+  ProjectApplicationWithRoundAndProgram,
 } from "./data.types";
 import {
   ApplicationSummary,
@@ -49,6 +51,11 @@ import {
   getRoundsQuery,
   getDonationsByDonorAddress,
   getApplicationsForExplorer,
+  getPayoutsByChainIdRoundIdProjectId,
+  getApprovedApplicationsByProjectIds,
+  getPaginatedProjects,
+  getProjectsBySearchTerm,
+  getRoundsForManagerByAddress,
 } from "./queries";
 import { mergeCanonicalAndLinkedProjects } from "./utils";
 
@@ -61,7 +68,6 @@ import { mergeCanonicalAndLinkedProjects } from "./utils";
  *
  * @param fetch - The fetch implementation to use for making HTTP requests.
  * @param search - The configuration for the search API.
- * @param subgraph - The configuration for the subgraph API.
  * @param indexer - The configuration for the indexer API.
  * @param ipfs - The configuration for the IPFS gateway.
  * @param passport - The configuration for the Passport verifier.
@@ -72,7 +78,6 @@ import { mergeCanonicalAndLinkedProjects } from "./utils";
 export class DataLayer {
   private searchResultsPageSize: number;
   private searchApiClient: SearchApi;
-  private subgraphEndpointsByChainId: Record<number, string>;
   private ipfsGateway: string;
   private collectionsSource: collections.CollectionsSource;
   private gsIndexerEndpoint: string;
@@ -80,7 +85,6 @@ export class DataLayer {
   constructor({
     fetch,
     search,
-    subgraph,
     indexer,
     ipfs,
     collections,
@@ -89,9 +93,6 @@ export class DataLayer {
     search: {
       pagination?: { pageSize: number };
       baseUrl: string;
-    };
-    subgraph?: {
-      endpointsByChainId: Record<number, string>;
     };
     indexer: {
       baseUrl: string;
@@ -111,7 +112,6 @@ export class DataLayer {
       }),
     );
     this.searchResultsPageSize = search.pagination?.pageSize ?? 10;
-    this.subgraphEndpointsByChainId = subgraph?.endpointsByChainId ?? {};
     this.ipfsGateway = ipfs?.gateway ?? "https://ipfs.io";
     this.collectionsSource =
       collections?.googleSheetsUrl === undefined
@@ -144,16 +144,16 @@ export class DataLayer {
    */
   async getProgramsByUser({
     address,
-    chainId,
+    chainIds,
     tags,
   }: {
     address: string;
-    chainId: number;
+    chainIds: number[];
     tags: string[];
   }): Promise<{ programs: Program[] }> {
     const requestVariables = {
       userAddress: address.toLowerCase(),
-      chainId,
+      chainIds,
       tags: ["program", ...tags],
     };
 
@@ -317,6 +317,74 @@ export class DataLayer {
   }
 
   /**
+   * Gets all active projects in the given range.
+   * @param first // number of projects to return
+   * @param offset // number of projects to skip
+   *
+   * @returns v2Project[]
+   */
+  async getPaginatedProjects({
+    first,
+    offset,
+  }: {
+    first: number;
+    offset: number;
+  }): Promise<v2Project[]> {
+    const requestVariables = {
+      first,
+      offset,
+    };
+
+    const response: { projects: v2Project[] } = await request(
+      this.gsIndexerEndpoint,
+      getPaginatedProjects,
+      requestVariables,
+    );
+
+    const projects: v2Project[] = mergeCanonicalAndLinkedProjects(
+      response.projects,
+    );
+
+    return projects;
+  }
+
+  /**
+   * Gets all projects that match the search term.
+   * @param searchTerm // search term to filter projects
+   * @param first // number of projects to return
+   * @param offset // number of projects to skip
+   *
+   * @returns v2Project[]
+   */
+  async getProjectsBySearchTerm({
+    searchTerm,
+    first,
+    offset,
+  }: {
+    searchTerm: string;
+    first: number;
+    offset: number;
+  }): Promise<v2Project[]> {
+    const requestVariables = {
+      searchTerm,
+      first,
+      offset,
+    };
+
+    const response: { searchProjects: v2Project[] } = await request(
+      this.gsIndexerEndpoint,
+      getProjectsBySearchTerm,
+      requestVariables,
+    );
+
+    const projects: v2Project[] = mergeCanonicalAndLinkedProjects(
+      response.searchProjects,
+    );
+
+    return projects;
+  }
+
+  /**
    * getApplicationsByProjectIds() returns a list of projects by address.
    * @param projectIds
    * @param chainIds
@@ -337,6 +405,29 @@ export class DataLayer {
       await request(
         this.gsIndexerEndpoint,
         getApplicationsByProjectIds,
+        requestVariables,
+      );
+
+    return response.applications ?? [];
+  }
+
+  /**
+   * getApprovedApplicationsByProjectIds() returns a list of approved applications of given projects.
+   * @param projectIds
+   */
+  async getApprovedApplicationsByProjectIds({
+    projectIds,
+  }: {
+    projectIds: string[];
+  }): Promise<ProjectApplicationWithRoundAndProgram[]> {
+    const requestVariables = {
+      projectIds: projectIds,
+    };
+
+    const response: { applications: ProjectApplicationWithRoundAndProgram[] } =
+      await request(
+        this.gsIndexerEndpoint,
+        getApprovedApplicationsByProjectIds,
         requestVariables,
       );
 
@@ -424,7 +515,7 @@ export class DataLayer {
     const query = gql`
       query Application {
         applications(
-          first: 100
+          first: 300
           filter: {
             and: [
               { status: { equalTo: APPROVED } },
@@ -573,6 +664,22 @@ export class DataLayer {
     return response.rounds;
   }
 
+  async getRoundsForManagersByAddress({
+    address,
+    chainIds,
+  }: {
+    address: string;
+    chainIds: number[];
+  }): Promise<RoundForManager[]> {
+    const response: { rounds: RoundForManager[] } = await request(
+      this.gsIndexerEndpoint,
+      getRoundsForManagerByAddress,
+      { chainIds, address },
+    );
+
+    return response.rounds;
+  }
+
   async getRoundForExplorer({
     roundId,
     chainId,
@@ -683,8 +790,24 @@ export class DataLayer {
     );
 
     return response.donations.filter((donation) => {
-      return donation.application.project !== null;
+      return (
+        donation.application !== null && donation.application?.project !== null
+      );
     });
+  }
+
+  async getPayoutsByChainIdRoundIdProjectId(args: {
+    chainId: number;
+    roundId: string;
+    projectId: string;
+  }): Promise<RoundApplicationPayout> {
+    const response: { round: RoundApplicationPayout } = await request(
+      this.gsIndexerEndpoint,
+      getPayoutsByChainIdRoundIdProjectId,
+      args,
+    );
+
+    return response.round;
   }
 
   /**

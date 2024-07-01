@@ -5,6 +5,7 @@ export type RoundPayoutType =
   | "allov1.Direct"
   | "allov1.QF"
   | "allov2.DirectGrantsSimpleStrategy"
+  | "allov2.DirectGrantsLiteStrategy"
   | "allov2.DonationVotingMerkleDistributionDirectTransferStrategy"
   | ""; // This is to handle the cases where the strategyName is not set in a round, mostly spam rounds
 export type RoundVisibilityType = "public" | "private";
@@ -210,6 +211,8 @@ export type v2Project = {
    * The linked chains to the canonical project
    */
   linkedChains?: number[];
+  qfRounds? : string[];
+  dgRounds? : string[];
 };
 
 /**
@@ -297,6 +300,21 @@ export type ProjectApplicationWithRound = ProjectApplication & {
     donationsEndTime: string;
     roundMetadata: RoundMetadata;
     name: string;
+    strategyName: RoundPayoutType;
+  };
+};
+
+export type ProjectApplicationWithRoundAndProgram = ProjectApplication & {
+  anchorAddress: Address;
+  round: {
+    applicationsStartTime: string;
+    applicationsEndTime: string;
+    donationsStartTime: string;
+    donationsEndTime: string;
+    roundMetadata: RoundMetadata;
+    project: {
+      name: string;
+    };
     strategyName: RoundPayoutType;
   };
 };
@@ -411,6 +429,8 @@ export type Eligibility = {
   requirements?: Requirement[];
 };
 
+export type SybilDefense = "passport" | "passport-mbds" | "none";
+
 export interface Round {
   /**
    * The on-chain unique round ID
@@ -434,7 +454,7 @@ export interface Round {
       matchingCapAmount?: number;
       minDonationThreshold?: boolean;
       minDonationThresholdAmount?: number;
-      sybilDefense?: boolean;
+      sybilDefense?: SybilDefense | boolean; // this is to support both old and new sybil defense types.
     };
     support?: {
       type: string;
@@ -498,6 +518,7 @@ export type TimeFilter = {
   lessThan?: string;
   greaterThanOrEqualTo?: string;
   lessThanOrEqualTo?: string;
+  isNull?: boolean;
 };
 
 export type TimeFilterVariables = {
@@ -505,6 +526,7 @@ export type TimeFilterVariables = {
   applicationsEndTime?: TimeFilter;
   donationsStartTime?: TimeFilter;
   donationsEndTime?: TimeFilter;
+  or?: TimeFilterVariables[];
 };
 
 export type RoundsQueryVariables = {
@@ -631,7 +653,7 @@ export interface MatchingFunds {
 
 export interface QuadraticFundingConfig {
   matchingCap: boolean;
-  sybilDefense: boolean;
+  sybilDefense: SybilDefense | boolean;
   matchingCapAmount?: number;
   minDonationThreshold: boolean;
   matchingFundsAvailable: number;
@@ -753,5 +775,25 @@ export type Contribution = {
       name: string;
     };
   };
-  timestamp?: bigint;
+  timestamp: string;
+};
+
+export type Payout = {
+  id: string;
+  tokenAddress: string;
+  amount: string;
+  amountInUsd: number;
+  transactionHash: string;
+  timestamp: string;
+  sender: string;
+};
+
+export type RoundApplicationPayout = {
+  id: string;
+  applications: [
+    {
+      id: string;
+      applicationsPayoutsByChainIdAndRoundIdAndApplicationId: Payout[];
+    },
+  ];
 };

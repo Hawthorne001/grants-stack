@@ -2,7 +2,8 @@ import { useDataLayer } from "data-layer";
 import { useEffect, useState } from "react";
 import { shallowEqual, useDispatch, useSelector } from "react-redux";
 import { useParams } from "react-router-dom";
-import { useSwitchNetwork } from "wagmi";
+import { useSwitchChain } from "wagmi";
+import { getChainById } from "common";
 import { fetchGrantData } from "../../actions/grantsMetadata";
 import {
   credentialsSaved,
@@ -13,7 +14,6 @@ import { RootState } from "../../reducers";
 import { Status as GrantsMetadataStatus } from "../../reducers/grantsMetadata";
 import colors from "../../styles/colors";
 import { ProjectFormStatus } from "../../types";
-import { networkPrettyName } from "../../utils/wallet";
 import Button, { ButtonVariants } from "../base/Button";
 import ExitModal from "../base/ExitModal";
 import Preview from "../base/Preview";
@@ -27,7 +27,7 @@ function EditProject() {
   const dataLayer = useDataLayer();
   const params = useParams();
   const dispatch = useDispatch();
-  const { switchNetwork } = useSwitchNetwork();
+  const { switchChain } = useSwitchChain();
 
   const [modalOpen, toggleModal] = useState(false);
   const [formStatus, setFormStatus] = useState<ProjectFormStatus>(
@@ -53,22 +53,19 @@ function EditProject() {
   const isOnProjectChain = Number(props.chainId) === Number(params.chainId);
 
   const onSwitchNetwork = () => {
-    if (switchNetwork) {
-      switchNetwork(Number(params.chainId));
+    if (switchChain) {
+      switchChain({ chainId: Number(params.chainId) });
     }
   };
 
-  const renderNetworkChangeModal = () => {
-    const roundNetworkName = networkPrettyName(Number(params.chainId));
-    return (
+  const renderNetworkChangeModal = () => (
+    <SwitchNetworkModal
       // eslint-disable-next-line
-      <SwitchNetworkModal
-        networkName={roundNetworkName}
-        onSwitchNetwork={onSwitchNetwork}
-        action="edit this project"
-      />
-    );
-  };
+      networkName={getChainById(Number(params.chainId)).prettyName}
+      onSwitchNetwork={onSwitchNetwork}
+      action="edit this project"
+    />
+  );
 
   useEffect(() => {
     if (

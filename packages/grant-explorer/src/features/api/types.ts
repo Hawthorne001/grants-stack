@@ -1,5 +1,4 @@
-import { ChainId } from "common";
-import { WalletClient } from "wagmi";
+import { WalletClient } from "viem";
 
 import type { Project } from "data-layer";
 
@@ -54,7 +53,7 @@ export interface IPFSObject {
 
 export type CartProject = Project & {
   roundId: string;
-  chainId: ChainId;
+  chainId: number;
   amount: string;
 };
 

@@ -2,18 +2,21 @@ import { Signer } from "@ethersproject/abstract-signer";
 import { Network, Web3Provider } from "@ethersproject/providers";
 import { useEffect, useState } from "react";
 import { useParams as useRouterParams } from "react-router";
-import { useOutletContext } from "react-router-dom";
 import z from "zod";
-import { ChainId } from "./chain-ids";
 import { Round } from "data-layer";
 import { getAlloVersion, getConfig } from "./config";
+import moment from "moment-timezone";
+import { getChainById } from "@gitcoin/gitcoin-chain-data";
 
 export * from "./icons";
 export * from "./markdown";
 export * from "./allo/common";
+export * from "./allo/application";
+export * from "./payoutTokens";
 
-export { PassportVerifierWithExpiration } from "./credentialVerifier";
-export { ChainId };
+export * from "./services/passport/passportCredentials";
+export { PassportVerifierWithExpiration } from "./services/passport/credentialVerifier";
+export * from "@gitcoin/gitcoin-chain-data";
 
 export function useParams<T extends Record<string, string> = never>() {
   return useRouterParams<T>() as T;
@@ -226,6 +229,46 @@ export const getUTCDateTime = (date: Date): string => {
   return `${getUTCDate(date)} ${getUTCTime(date)}`;
 };
 
+export const formatLocalDateAsISOString = (date: Date): string => {
+  // @ts-expect-error remove when DG support is merged
+  if (isNaN(date)) {
+    return "";
+  }
+  const localString = getLocalDate(date);
+  return localString;
+};
+
+export function getTimezoneName() {
+  const today = new Date();
+  const userTimeZone = moment.tz.guess();
+  const formattedDate = moment(today).tz(userTimeZone).format("z");
+
+  return formattedDate;
+}
+
+export const getLocalTime = (date: Date): string => {
+  const localTime = [
+    padSingleDigitNumberWithZero(date.getHours()),
+    padSingleDigitNumberWithZero(date.getMinutes()),
+  ];
+
+  return localTime.join(":") + " " + getTimezoneName();
+};
+
+export const getLocalDate = (date: Date): string => {
+  const localDate = [
+    padSingleDigitNumberWithZero(date.getFullYear()),
+    padSingleDigitNumberWithZero(date.getMonth() + 1),
+    padSingleDigitNumberWithZero(date.getDate()),
+  ];
+
+  return localDate.join("/");
+};
+
+export const getLocalDateTime = (date: Date): string => {
+  return `${getLocalDate(date)} ${getLocalTime(date)}`;
+};
+
 export const useTokenPrice = (tokenId: string | undefined) => {
   const [tokenPrice, setTokenPrice] = useState<number>();
   const [error, setError] = useState<Error | undefined>(undefined);
@@ -303,6 +346,7 @@ export type RoundPayoutTypeNew =
   | "allov2.SQFSuperFluidStrategy"
   | "allov2.MicroGrantsGovStrategy"
   | "allov2.DirectGrantsSimpleStrategy"
+  | "allov2.DirectGrantsLiteStrategy"
   | ""; // This is to handle the cases where the strategyName is not set in a round, mostly spam rounds
 
 export type RoundStrategyType = "QuadraticFunding" | "DirectGrants";
@@ -322,6 +366,7 @@ export function getRoundStrategyType(name: string): RoundStrategyType {
     case "allov1.Direct":
     case "DIRECT":
     case "allov2.DirectGrantsSimpleStrategy":
+    case "allov2.DirectGrantsLiteStrategy":
       return "DirectGrants";
 
     case "allov1.QF":
@@ -340,11 +385,7 @@ export { AlloError, AlloOperation } from "./allo/allo";
 export type { Allo } from "./allo/allo";
 export { AlloV1 } from "./allo/backends/allo-v1";
 export { AlloV2 } from "./allo/backends/allo-v2";
-export {
-  createWaitForIndexerSyncTo,
-  getCurrentSubgraphBlockNumber,
-  waitForSubgraphSyncTo,
-} from "./allo/indexer";
+export { createWaitForIndexerSyncTo } from "./allo/indexer";
 export type { WaitUntilIndexerSynced } from "./allo/indexer";
 export { createPinataIpfsUploader } from "./allo/ipfs";
 export { AlloContext, AlloProvider, useAllo } from "./allo/react";
@@ -369,14 +410,6 @@ interface JsonMap {
   [key: string]: AnyJson;
 }
 type JsonArray = Array<AnyJson>;
-
-/**
- * Wrapper hook to expose wallet auth information to other components
- */
-export function useWallet() {
-  return useOutletContext<Web3Instance>();
-}
-
 export interface Web3Instance {
   /**
    * Currently selected address in ETH format i.e 0x...
@@ -394,15 +427,13 @@ export interface Web3Instance {
   signer?: Signer;
 }
 
-export { graphQlEndpoints, graphql_fetch } from "./graphql_fetch";
-
 export function roundToPassportIdAndKeyMap(round: Round): {
   communityId: string;
   apiKey: string;
 } {
   const chainId = round?.chainId;
   switch (chainId) {
-    case ChainId.AVALANCHE:
+    case 43114: // Arbitrum
       return {
         communityId: getConfig().passport.passportAvalancheCommunityId,
         apiKey: getConfig().passport.passportAvalancheAPIKey,
@@ -418,14 +449,34 @@ export function roundToPassportIdAndKeyMap(round: Round): {
 export function roundToPassportURLMap(round: Round) {
   const chainId = round.chainId;
   switch (chainId) {
-    case ChainId.AVALANCHE:
+    case 43114: // Arbitrum
       return "https://passport.gitcoin.co/#/dashboard/avalanche";
     default:
       return "https://passport.gitcoin.co";
   }
 }
 
-const passportLiteRounds = [
+export * from "./allo/transaction-builder";
+
+/**
+ * Fetch the correct transaction block explorer link for the provided web3 network
+ *
+ * @param chainId - The chain ID of the blockchain
+ * @param txHash - The transaction hash
+ * @returns the transaction block explorer URL for the provided transaction hash and network
+ */
+export const getTxBlockExplorerLink = (chainId: number, txHash: string) => {
+  return getChainById(chainId)?.blockExplorer + "tx/" + txHash;
+};
+
+export function isChainIdSupported(chainId: number) {
+  if (chainId === 424 && getAlloVersion() === "allo-v2") {
+    return false;
+  }
+  return getChainById(chainId) !== undefined;
+}
+
+const gg20Rounds = [
   //GG20 rounds
   { roundId: "23", chainId: 42161 }, // Hackathon Alumni
   { roundId: "24", chainId: 42161 }, // ENS
@@ -435,58 +486,22 @@ const passportLiteRounds = [
   { roundId: "28", chainId: 42161 }, // Hypercerts Ecosystem
   { roundId: "29", chainId: 42161 }, // Climate Solutions
   { roundId: "31", chainId: 42161 }, // Open Civics
+  { roundId: "36", chainId: 42161 }, // Regenerative Land Projects
+  { roundId: "39", chainId: 42161 }, // DeSci
   { roundId: "9", chainId: 10 }, // Token Engineering Commons (TEC)
 ];
 
-export function isRoundUsingPassportLite(round: Round) {
-  const roundId = round.id;
-  const chainId = round.chainId;
-  return passportLiteRounds.some(
-    (r) => r.roundId === roundId && r.chainId === chainId
-  );
+export function isGG20Round(roundId: string, chainId: number) {
+  return gg20Rounds.some((r) => r.roundId === roundId && r.chainId === chainId);
 }
 
-export * from "./allo/transaction-builder";
-export type { VotingToken } from "./types";
-
-export const txBlockExplorerLinks: Record<ChainId, string> = {
-  [ChainId.DEV1]: "",
-  [ChainId.DEV2]: "",
-  [ChainId.MAINNET]: "https://etherscan.io/tx/",
-  [ChainId.OPTIMISM_MAINNET_CHAIN_ID]: "https://optimistic.etherscan.io/tx/",
-  [ChainId.FANTOM_MAINNET_CHAIN_ID]: "https://ftmscan.com/tx/",
-  [ChainId.FANTOM_TESTNET_CHAIN_ID]: "ttps://testnet.ftmscan.com/tx/",
-  [ChainId.PGN_TESTNET]: "https://explorer.sepolia.publicgoods.network/tx/",
-  [ChainId.PGN]: "https://explorer.publicgoods.network/tx/",
-  [ChainId.ARBITRUM_GOERLI]: "https://goerli.arbiscan.io/tx/",
-  [ChainId.ARBITRUM]: "https://arbiscan.io/tx/",
-  [ChainId.POLYGON]: "https://polygonscan.com/tx/",
-  [ChainId.POLYGON_MUMBAI]: "https://mumbai.polygonscan.com/tx/",
-  [ChainId.FUJI]: "https://snowtrace.io/tx/",
-  [ChainId.AVALANCHE]: "https://snowtrace.io/tx/",
-  [ChainId.ZKSYNC_ERA_TESTNET_CHAIN_ID]:
-    "https://goerli.explorer.zksync.io/tx/",
-  [ChainId.ZKSYNC_ERA_MAINNET_CHAIN_ID]: "https://explorer.zksync.io/tx/",
-  [ChainId.BASE]: "https://basescan.org/tx/",
-  [ChainId.SEPOLIA]: "https://sepolia.etherscan.io/tx/",
-  [ChainId.SCROLL]: "https://scrollscan.com/tx/",
-  [ChainId.SEI_DEVNET]: "https://seistream.app/tx/",
-};
-
-/**
- * Fetch the correct transaction block explorer link for the provided web3 network
- *
- * @param chainId - The chain ID of the blockchain
- * @param txHash - The transaction hash
- * @returns the transaction block explorer URL for the provided transaction hash and network
- */
-export const getTxBlockExplorerLink = (chainId: ChainId, txHash: string) => {
-  return txBlockExplorerLinks[chainId] + txHash;
-};
-
-export function isChainIdSupported(chainId: number) {
-  if (chainId === 424 && getAlloVersion() === "allo-v2") {
-    return false;
-  }
-  return Object.values(ChainId).includes(chainId);
+export function isLitUnavailable(chainId: number) {
+  return [
+    4201, // LUKSO_TESTNET,
+    42, // LUKSO,
+    713715, // SEI_DEVNET,
+    1329, // SEI_MAINNET,
+  ].includes(chainId);
 }
+
+export * from "./chains";

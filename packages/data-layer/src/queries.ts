@@ -9,12 +9,13 @@ import { gql } from "graphql-request";
  * @returns The programs
  */
 export const getProgramsByUserAndTag = gql`
-  query ($userAddress: String!, $chainId: Int!, $tags: [String!]!) {
+  query ($userAddress: String!, $chainIds: [Int!]!, $tags: [String!]!) {
     projects(
+      orderBy: PRIMARY_KEY_DESC
       first: 100
       filter: {
         tags: { contains: $tags }
-        chainId: { equalTo: $chainId }
+        chainId: { in: $chainIds }
         roles: { some: { address: { equalTo: $userAddress } } }
       }
     ) {
@@ -28,6 +29,20 @@ export const getProgramsByUserAndTag = gql`
         address
         role
         createdAtBlock
+      }
+      qfRounds: rounds(
+        filter: {
+          strategyName: {
+            equalTo: "allov2.DonationVotingMerkleDistributionDirectTransferStrategy"
+          }
+        }
+      ) {
+        id
+      }
+      dgRounds: rounds(
+        filter: { strategyName: { equalTo: "allov2.DirectGrantsLiteStrategy" } }
+      ) {
+        id
       }
     }
   }
@@ -192,6 +207,37 @@ export const getApplicationsByProjectIds = gql`
         donationsStartTime
         donationsEndTime
         roundMetadata
+        strategyName
+      }
+    }
+  }
+`;
+
+export const getApprovedApplicationsByProjectIds = gql`
+  query getApprovedApplicationsByProjectIds($projectIds: [String!]!) {
+    applications(
+      first: 1000
+      filter: { projectId: { in: $projectIds }, status: { equalTo: APPROVED } }
+    ) {
+      id
+      projectId
+      chainId
+      roundId
+      status
+      metadataCid
+      metadata
+      totalDonationsCount
+      totalAmountDonatedInUsd
+      uniqueDonorsCount
+      round {
+        applicationsStartTime
+        applicationsEndTime
+        donationsStartTime
+        donationsEndTime
+        roundMetadata
+        project {
+          name
+        }
         strategyName
       }
     }
@@ -393,6 +439,86 @@ export const getProjectsByAddress = gql`
   }
 `;
 
+/**
+ * Get active projects in the given range
+`* @param $first - The number of projects to return
+ * @param $offset - The offset of the projects
+ *
+ * @returns The v2Projects
+ */
+export const getPaginatedProjects = gql`
+  query getPaginatedProjects($first: Int!, $offset: Int!) {
+    projects(
+      filter: {
+        tags: { equalTo: "allo-v2" }
+        not: { tags: { contains: "program" } }
+        chainId: {
+          in: [1, 137, 10, 324, 42161, 42220, 43114, 534352, 8453, 1329]
+        }
+        rounds: { every: { applicationsExist: true } }
+      }
+      first: $first
+      offset: $offset
+    ) {
+      id
+      chainId
+      metadata
+      metadataCid
+      name
+      nodeId
+      projectNumber
+      registryAddress
+      tags
+      nonce
+      anchorAddress
+      projectType
+    }
+  }
+`;
+
+/**
+ * Get projects by search term
+ * @param $searchTerm - The search term
+`* @param $first - The number of projects to return
+ * @param $offset - The offset of the projects
+ *
+ * @returns The v2Projects
+ */
+export const getProjectsBySearchTerm = gql`
+  query getProjectsBySearchTerm(
+    $searchTerm: String!
+    $first: Int!
+    $offset: Int!
+  ) {
+    searchProjects(
+      searchTerm: $searchTerm
+      filter: {
+        tags: { equalTo: "allo-v2" }
+        not: { tags: { contains: "program" } }
+        chainId: {
+          in: [1, 137, 10, 324, 42161, 42220, 43114, 534352, 8453, 1329]
+        }
+        rounds: { every: { applicationsExist: true } }
+      }
+      first: $first
+      offset: $offset
+    ) {
+      id
+      chainId
+      metadata
+      metadataCid
+      name
+      nodeId
+      projectNumber
+      registryAddress
+      tags
+      nonce
+      anchorAddress
+      projectType
+    }
+  }
+`;
+
 export const getProjectsAndRolesByAddress = gql`
   query getProjectsAndRolesByAddressQuery(
     $address: String!
@@ -561,10 +687,32 @@ export const getRoundForManager = gql`
 export const getRoundsForManager = gql`
   query getRoundsForManager($chainId: Int!, $programId: String!) {
     rounds(
+      orderBy: ID_DESC
       first: 1000
       filter: {
         chainId: { equalTo: $chainId }
         projectId: { equalTo: $programId }
+      }
+    ) {
+      ${getRoundForManagerFields}
+    }
+  }
+`;
+
+export const getRoundsForManagerByAddress = gql`
+  query getRoundsForManager($chainIds: [Int!]!, $address: String!) {
+    rounds(
+      orderBy: ID_DESC
+      first: 1000
+      filter: {
+        chainId: {in: $chainIds}, 
+        roles: {
+          some: {
+            address: {
+              equalTo: $address
+            }
+          }
+        }
       }
     ) {
       ${getRoundForManagerFields}
@@ -632,6 +780,7 @@ export const getDonationsByDonorAddress = gql`
       amountInUsd
       transactionHash
       blockNumber
+      timestamp
       round {
         roundMetadata
         donationsStartTime
@@ -640,6 +789,30 @@ export const getDonationsByDonorAddress = gql`
       application {
         project: canonicalProject {
           name
+        }
+      }
+    }
+  }
+`;
+
+export const getPayoutsByChainIdRoundIdProjectId = gql`
+  query getPayoutsByChainIdRoundIdRecipientId(
+    $chainId: Int!
+    $roundId: String!
+    $projectId: String!
+  ) {
+    round(chainId: $chainId, id: $roundId) {
+      id
+      applications(filter: { projectId: { equalTo: $projectId } }) {
+        id
+        applicationsPayoutsByChainIdAndRoundIdAndApplicationId {
+          id
+          tokenAddress
+          amount
+          amountInUsd
+          transactionHash
+          timestamp
+          sender
         }
       }
     }

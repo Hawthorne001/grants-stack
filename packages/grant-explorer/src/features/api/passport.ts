@@ -6,7 +6,6 @@ import {
   PassportState,
   submitPassport,
   roundToPassportIdAndKeyMap,
-  ChainId,
 } from "common";
 import { Round } from "data-layer";
 import { useEffect, useMemo } from "react";
@@ -33,7 +32,7 @@ export function usePassport({
     async (args) => {
       // for avalance we need to submit the passport to fetch the score.
       const res =
-        round.chainId === ChainId.AVALANCHE
+        round.chainId === 43114 // Avalanche
           ? await submitPassport(...args)
           : await fetchPassport(...args);
 
@@ -51,9 +50,7 @@ export function usePassport({
         case 400: // unregistered/nonexistent passport address
           return PassportState.INVALID_PASSPORT;
         case 401: // invalid API key
-          swr.error.json().then((json) => {
-            console.error("invalid API key", json);
-          });
+          console.error("invalid key for the Passport api");
           return PassportState.ERROR;
         default:
           console.error("Error fetching passport", swr.error);

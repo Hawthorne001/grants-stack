@@ -1,5 +1,4 @@
-import React, { useEffect } from "react";
-import { ChainId } from "common";
+import { useEffect } from "react";
 import { groupProjectsInCart } from "../../api/utils";
 import Footer from "common/src/components/Footer";
 import Navbar from "../../common/Navbar";
@@ -10,7 +9,7 @@ import { useCartStorage } from "../../../store";
 import { CartWithProjects } from "./CartWithProjects";
 import { SummaryContainer } from "./SummaryContainer";
 import { useDataLayer } from "data-layer";
-import { createCartProjectFromApplication } from "../../discovery/ExploreProjectsPage";
+import { createCartProjectFromApplication } from "../../discovery/ExploreApplicationsPage";
 
 export default function ViewCart() {
   const { projects, setCart } = useCartStorage();
@@ -92,7 +91,7 @@ export default function ViewCart() {
                     <div key={Number(chainId)}>
                       <CartWithProjects
                         cart={groupedCartProjects[Number(chainId)]}
-                        chainId={Number(chainId) as ChainId}
+                        chainId={Number(chainId) as number}
                       />
                     </div>
                   ))}
